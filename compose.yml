@@ -1,0 +1,26 @@
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: always
+    environment:
+      # 访问密钥（用户名），至少3个字符
+      - MINIO_ROOT_USER=minioadmin
+      # 密钥（密码），至少8个字符
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      # API 端口（用于 S3 协议访问）
+      - "9000:9000"
+      # 控制台端口（Web 管理界面）
+      - "9001:9001"
+    volumes:
+      # 挂载本地目录存储数据（需提前创建）
+      - ./data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - minio-network
+
+networks:
+  minio-network:
+    driver: bridge

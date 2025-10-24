@@ -1,0 +1,19 @@
+[project]
+name = "ad-regulation"
+version = "0.1.0"
+description = "Automated Facebook advertising regulation system with ML-powered evaluation"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "beanie>=2.0.0",
+    "facebook-business>=23.0.3",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "httpx>=0.27.0",
+    "matplotlib>=3.10.7",
+    "pandas>=2.3.3",
+    "pyarrow>=21.0.0",
+    "pydantic>=2.12.3",
+    "pymongo>=4.15.3",
+    "scikit-learn>=1.7.2",
+]
