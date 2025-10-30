@@ -78,7 +78,7 @@ async def get_insight(
     sort="",
     limit=100000,
 ):
-    """用于异步获取数据拉取任务"""
+    """用于同步获取数据拉取任务"""
     account_id = ad_account_id
     # 如果文件已经存在，则跳过
     ad_object = await get_ad_object(account_id, account_id)

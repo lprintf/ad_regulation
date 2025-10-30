@@ -17,9 +17,11 @@ This is an **automated Facebook advertising regulation system** designed to opti
 - ✅ Data fetching pipeline with async task management
 - ✅ Feature engineering with lag features, trends, and volatility metrics
 - ✅ ML model training with HistGradientBoostingClassifier
-- 🚧 FastAPI service layer (to be implemented)
-- 🚧 Automated ad control actions (to be implemented)
+- ✅ FastAPI service layer with Insights data endpoints
+- ✅ ML prediction API endpoints for ad evaluation
+- ✅ Ad control operations (start/stop ads, update names, modify budgets)
 - 🚧 Rule-based evaluation engine (to be implemented)
+- 🚧 Automated decision-making system (to be implemented)
 
 ## Architecture
 
@@ -54,19 +56,69 @@ This is an **automated Facebook advertising regulation system** designed to opti
      - `train_model()` handles full pipeline: split by ad_id, train, threshold optimization on F1
      - Returns comprehensive metrics: AUC, classification reports, predicted probabilities
 
+5. **FastAPI Service Layer** (`api/`)
+   - `app.py`: Main FastAPI application with lifespan management and error handlers
+   - `routers/`: API endpoint definitions
+     - `health.py`: Health check endpoint
+     - `ad_accounts.py`: Ad account management endpoints
+     - `insights.py`: Insights data fetching endpoints (sync and async)
+     - `predictions.py`: ML-powered ad evaluation endpoints
+     - `ad_control.py`: Ad control operations (start/stop, update name/budget)
+   - `services/`: Business logic layer
+     - `insights_service.py`: Service for fetching and processing Facebook Ads Insights
+     - `prediction_service.py`: Service for ad performance prediction using trained ML models
+     - `ad_control_service.py`: Service for controlling Facebook ads (status, name, budget)
+   - `models/`: Pydantic request/response models
+     - `responses.py`: Standard success/error response models
+     - `ad_accounts.py`: Ad account models
+     - `insights.py`: Insights data models, async job models, and prediction models
+     - `ad_control.py`: Ad control request/response models
+   - `dependencies/`: Shared dependencies
+     - `auth.py`: User authentication via X-User-Id header
+     - `database.py`: Database connection management
+
 ### Data Flow
 
 **Current Implementation:**
-1. Facebook API → Raw insights data (via `get_data.py`)
+1. Facebook API → Raw insights data (via `get_data.py` or API endpoints)
 2. Raw data → Cleaned data → Feature matrix (via `data_build.py`)
 3. Features + Labels → Trained model (via `train_tools.py`)
 4. Model predictions → Ad stop/continue recommendations
 
-**Future Architecture (with FastAPI):**
+**API Architecture (Current):**
+```
+┌─────────────────────────────────────────────────────┐
+│            FastAPI Application                      │
+│  ┌──────┬──────────┬──────────┬────────┬──────────┐│
+│  │Health│    Ad    │ Insights │   ML   │   Ad     ││
+│  │      │ Accounts │   API    │ Predict│ Control  ││
+│  └──────┴──────────┴──────────┴────────┴──────────┘│
+└──────────────┬──────────────────────────────────────┘
+               │
+    ┌──────────┴─────────┐
+    │                    │
+┌───▼────────────┐ ┌────▼──────────┐
+│ Service Layer  │ │  Auth Layer   │
+│ - Insights     │ │ - X-User-Id   │
+│ - Predictions  │ │               │
+│ - Ad Control   │ │               │
+└───┬────────────┘ └───────────────┘
+    │
+┌───▼─────────────────────────────┐
+│  Facebook API Integration       │
+│  - Flyweight Pattern Caching    │
+│  - Sync/Async Insights Fetching │
+└───┬─────────────────────────────┘
+    │
+┌───▼─────────────┐
+│ Facebook Ads API│
+└─────────────────┘
+```
+
+**Future Extensions:**
 ```
 ┌─────────────────┐
 │  FastAPI Layer  │
-│  (Planned)      │
 └────────┬────────┘
          │
     ┌────┴────┐
@@ -106,6 +158,18 @@ python baseline/data_build.py
 
 # Train model
 python baseline/train_tools.py
+```
+
+### Running API Server
+```bash
+# Start the API server (development mode with auto-reload)
+python run_api.py
+# Or using uvicorn directly
+uvicorn api.app:app --reload --host 0.0.0.0 --port 8000
+
+# Access API documentation
+# Swagger UI: http://localhost:8000/docs
+# ReDoc: http://localhost:8000/redoc
 ```
 
 ### Docker Services
@@ -198,3 +262,292 @@ python baseline/data_build.py
 - `FbAppAuthDocument`: App credentials (app_id, app_secret, access_token, user_id)
 - `FbAppTokenInfoDocument`: Token metadata from Facebook Graph API
 - `BIUserAdAccountLink`: User-account relationships with role-based access
+
+## API Endpoints
+
+### Authentication
+All endpoints require the `X-User-Id` header for user authentication.
+
+### Available Endpoints
+
+#### Health Check
+- `GET /health` - Check service health status
+
+#### Ad Accounts
+- `GET /ad-accounts` - List all ad accounts
+- `GET /ad-accounts/{account_id}` - Get specific ad account details
+
+#### Insights Data (Synchronous)
+- `GET /insights/sync` - Fetch insights data immediately
+  - Query parameters:
+    - `ad_account_id` (required): Ad account ID
+    - `since` (required): Start date (YYYY-MM-DD)
+    - `until` (required): End date (YYYY-MM-DD)
+    - `level` (optional): Aggregation level (ad/adset/campaign), default: "ad"
+    - `time_increment` (optional): Time granularity (1=daily, null=aggregate)
+    - `breakdowns` (optional): Breakdown dimensions (e.g., "country", "hourly_stats_aggregated_by_advertiser_time_zone")
+
+#### Insights Data (Asynchronous)
+- `POST /insights/async` - Create async insights job
+  - Request body: JSON with `ad_account_id`, `since`, `until`, `level`, `time_increment`, `breakdowns`
+  - Returns: `job_id` and initial status
+- `GET /insights/async/{job_id}` - Check job status
+  - Query parameters: `ad_account_id`
+  - Returns: Job status and completion percentage
+- `GET /insights/async/{job_id}/result` - Get completed job results
+  - Query parameters: `ad_account_id`
+  - Returns: Insights data (only when job is completed)
+
+#### ML-Powered Ad Evaluation (Predictions)
+- `POST /predictions/evaluate` - Evaluate ad performance for today using ML model
+  - Request body: JSON with optional `ad_account_ids`, `lookback_days`, `model_path`
+  - Returns: Predictions with stop probabilities and features for all ads
+  - If `ad_account_ids` is null, evaluates all accounts
+- `GET /predictions/evaluate/{ad_account_id}` - Evaluate ads for a specific account
+  - Path parameter: `ad_account_id` (with or without act_ prefix)
+  - Query parameters:
+    - `lookback_days` (optional): Days to look back (default: 10, range: 7-30)
+  - Returns: Predictions with stop probabilities for the specified account
+
+#### Ad Control Operations
+- `GET /ad-control/status` - Get current status and details of an ad
+  - Query parameters:
+    - `ad_account_id` (required): Ad account ID (with or without act_ prefix)
+    - `ad_id` (required): Ad ID to query
+  - Returns: Ad status, name, campaign/adset IDs, created/updated time
+- `POST /ad-control/start` - Start (activate) an ad
+  - Request body: JSON with `ad_account_id`, `ad_id`
+  - Returns: Operation result and updated ad status
+- `POST /ad-control/stop` - Stop (pause) an ad
+  - Request body: JSON with `ad_account_id`, `ad_id`
+  - Returns: Operation result and updated ad status
+- `POST /ad-control/update-name` - Update ad name
+  - Request body: JSON with `ad_account_id`, `ad_id`, `new_name`
+  - Returns: Operation result and updated ad details
+- `GET /ad-control/adset/budget` - Get AdSet budget information
+  - Query parameters:
+    - `ad_account_id` (required): Ad account ID
+    - `adset_id` (required): AdSet ID to query
+  - Returns: Daily budget, lifetime budget, budget remaining (in cents)
+- `POST /ad-control/adset/update-budget` - Update AdSet budget
+  - Request body: JSON with `ad_account_id`, `adset_id`, and optional `daily_budget` or `lifetime_budget` (in cents)
+  - Returns: Operation result and updated budget details
+  - Note: Budget values are in cents (100 cents = $1.00)
+- `GET /ad-control/activities` - Get account activities (activity log / audit trail)
+  - Query parameters:
+    - `ad_account_id` (required): Ad account ID (with or without act_ prefix)
+    - `object_id` (optional): Filter by specific object ID (ad, adset, or campaign)
+    - `limit` (optional): Maximum number of activities to retrieve (default: 100, max: 10000)
+  - Returns: List of historical modification records with event time, actor, event type, object details, and extra metadata
+  - Use cases: Track who changed what and when, audit ad modifications, debug unexpected changes
+
+### Usage Examples
+
+#### Example 1: Fetch Daily Insights (Sync)
+```bash
+curl -X GET "http://localhost:8000/insights/sync?ad_account_id=act_123&since=2025-10-01&until=2025-10-20&time_increment=1" \
+  -H "X-User-Id: user123"
+```
+
+#### Example 2: Fetch Hourly Insights by Advertiser Time Zone (Sync)
+```bash
+curl -X GET "http://localhost:8000/insights/sync?ad_account_id=act_123&since=2025-10-20&until=2025-10-20&breakdowns=hourly_stats_aggregated_by_advertiser_time_zone" \
+  -H "X-User-Id: user123"
+```
+
+#### Example 3: Fetch Country-Level Insights (Sync)
+```bash
+curl -X GET "http://localhost:8000/insights/sync?ad_account_id=act_123&since=2025-10-01&until=2025-10-20&time_increment=1&breakdowns=country" \
+  -H "X-User-Id: user123"
+```
+
+#### Example 4: Large Data Fetch (Async)
+```bash
+# Step 1: Create async job
+curl -X POST "http://localhost:8000/insights/async" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "ad_account_id": "act_123",
+    "since": "2025-01-01",
+    "until": "2025-12-31",
+    "level": "ad",
+    "time_increment": 1
+  }'
+
+# Response: {"success": true, "data": {"job_id": "12345678", ...}}
+
+# Step 2: Check job status
+curl -X GET "http://localhost:8000/insights/async/12345678?ad_account_id=act_123" \
+  -H "X-User-Id: user123"
+
+# Response: {"success": true, "data": {"status": "Job Completed", "percent_complete": 100, ...}}
+
+# Step 3: Get results
+curl -X GET "http://localhost:8000/insights/async/12345678/result?ad_account_id=act_123" \
+  -H "X-User-Id: user123"
+```
+
+#### Example 5: Evaluate All Ads with ML Model
+```bash
+# Evaluate all ad accounts
+curl -X POST "http://localhost:8000/predictions/evaluate" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "lookback_days": 10
+  }'
+
+# Response:
+# {
+#   "success": true,
+#   "data": {
+#     "predictions": [
+#       {
+#         "ad_account_name": "My Account",
+#         "ad_id": "123456789",
+#         "date": "2025-10-27",
+#         "pred_proba": 0.75,
+#         "features": {
+#           "spend_lag1": 100.5,
+#           "roas_lag1": 0.45,
+#           "ctr_lag1": 0.02,
+#           ...
+#         }
+#       }
+#     ],
+#     "total_records": 50,
+#     "date_range": {"since": "2025-10-17", "until": "2025-10-27"},
+#     "evaluation_date": "2025-10-27"
+#   }
+# }
+```
+
+#### Example 6: Evaluate Specific Ad Account
+```bash
+curl -X GET "http://localhost:8000/predictions/evaluate/act_123?lookback_days=10" \
+  -H "X-User-Id: user123"
+
+# Response: Same format as Example 5, but only for the specified account
+```
+
+#### Example 7: Get Ad Status
+```bash
+curl -X GET "http://localhost:8000/ad-control/status?ad_account_id=1279567647104057&ad_id=120234815168290189" \
+  -H "X-User-Id: user123"
+
+# Response:
+# {
+#   "success": true,
+#   "data": {
+#     "ad_id": "120234815168290189",
+#     "name": "Ad global_engagement_$1",
+#     "configured_status": "PAUSED",
+#     "effective_status": "PAUSED",
+#     "campaign_id": "120234813759620189",
+#     "adset_id": "120234814836800189"
+#   }
+# }
+```
+
+#### Example 8: Start/Stop Ad
+```bash
+# Start an ad
+curl -X POST "http://localhost:8000/ad-control/start" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "ad_account_id": "1279567647104057",
+    "ad_id": "120234815168290189"
+  }'
+
+# Stop an ad
+curl -X POST "http://localhost:8000/ad-control/stop" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "ad_account_id": "1279567647104057",
+    "ad_id": "120234815168290189"
+  }'
+```
+
+#### Example 9: Update Ad Name and Budget
+```bash
+# Update ad name
+curl -X POST "http://localhost:8000/ad-control/update-name" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "ad_account_id": "1279567647104057",
+    "ad_id": "120234815168290189",
+    "new_name": "优化后的广告"
+  }'
+
+# Update adset daily budget to $5.00
+curl -X POST "http://localhost:8000/ad-control/adset/update-budget" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "ad_account_id": "1279567647104057",
+    "adset_id": "120234814836800189",
+    "daily_budget": 500
+  }'
+```
+
+#### Example 10: Get Account Activities (Activity Log / Audit Trail)
+```bash
+# Get all account activities (last 100 records)
+curl -X GET "http://localhost:8000/ad-control/activities?ad_account_id=1279567647104057&limit=100" \
+  -H "X-User-Id: user123"
+
+# Get activities for a specific ad
+curl -X GET "http://localhost:8000/ad-control/activities?ad_account_id=1279567647104057&object_id=120234815168290189&limit=50" \
+  -H "X-User-Id: user123"
+
+# Response:
+# {
+#   "success": true,
+#   "data": {
+#     "total_activities": 15,
+#     "activities": [
+#       {
+#         "event_time": "2025-10-29T10:30:00+0000",
+#         "actor_name": "John Doe",
+#         "event_type": "update",
+#         "object_type": "ad",
+#         "object_id": "120234815168290189",
+#         "object_name": "Ad global_engagement_$1",
+#         "extra_data": {
+#           "field": "status",
+#           "old_value": "ACTIVE",
+#           "new_value": "PAUSED"
+#         }
+#       }
+#     ]
+#   }
+# }
+```
+
+### Response Format
+All endpoints return standardized JSON responses:
+
+**Success Response:**
+```json
+{
+  "success": true,
+  "data": { ... },
+  "message": "Optional success message"
+}
+```
+
+**Error Response:**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Error description",
+    "details": { ... }
+  }
+}
+```

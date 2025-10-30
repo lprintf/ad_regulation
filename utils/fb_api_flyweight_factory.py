@@ -21,10 +21,19 @@ class FacebookAdsApiFlyweightFactory:
         return self._cache[ad_account_id]
 
     async def create(self, ad_account_id: str) -> FacebookAdsApi:
+        print(f"[DEBUG] Looking up ad_account_id in DB: {ad_account_id}")
         ad_account = await ADAccountDocument.find_one(
             ADAccountDocument.id == ad_account_id, fetch_links=True
         )
+        if not ad_account:
+            raise ValueError(f"Ad account '{ad_account_id}' not found in database")
+        print(f"[DEBUG] Found ad_account: {ad_account.name}")
+
         fb_app_auth: FbAppAuthDocument = ad_account.fb_app_auth
+        if not fb_app_auth:
+            raise ValueError(f"No FB app auth found for ad account '{ad_account_id}'")
+
+        print(f"[DEBUG] Initializing API with app_id: {fb_app_auth.app_id}")
         return FacebookAdsApi.init(
             fb_app_auth.app_id, fb_app_auth.app_secret, fb_app_auth.access_token
         )
@@ -34,6 +43,10 @@ class FacebookAdsApiFlyweightFactory:
 
 
 fb_ads_api_flyweight_factory = FacebookAdsApiFlyweightFactory()
+
+
+async def get_api(ad_account_id: str) -> FacebookAdsApi:
+    return await fb_ads_api_flyweight_factory.get(ad_account_id)
 
 
 async def get_ad_object(ad_account_id: str, fbid) -> AdAccount:

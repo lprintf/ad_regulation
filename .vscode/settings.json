@@ -21,8 +21,8 @@
     "terminal.integrated.env.windows": {
         "PYTHONPATH": "${workspaceFolder}",
         "ENV_FILE": "${workspaceFolder}/.env",
-        // "ANTHROPIC_BASE_URL": "https://q.quuvv.cn",
-        // "ANTHROPIC_AUTH_TOKEN": "sk-9cPF4AhipgYi0S6NG2Iz0r26PYSwkJTJYWbGbB5QRmVrB5To"
+        "ANTHROPIC_BASE_URL": "https://q.quuvv.cn",
+        "ANTHROPIC_AUTH_TOKEN": "sk-9cPF4AhipgYi0S6NG2Iz0r26PYSwkJTJYWbGbB5QRmVrB5To"
     },
     "terminal.integrated.env.osx": {
         "PYTHONPATH": "${workspaceFolder}",
@@ -62,10 +62,10 @@
         "Git Bash": {
             "path": "C:\\Program Files\\Git\\bin\\bash.exe",
             "args": [
-                // "--login",
-                // "-i",
-                // "-c",
-                // "set -a; [ -f .env ] && . .env; set +a; exec bash"
+                "--login",
+                "-i",
+                "-c",
+                "set -a; [ -f .env ] && . .env; set +a; exec bash"
             ],
             "icon": "terminal-bash"
         },

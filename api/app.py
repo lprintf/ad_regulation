@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from api.dependencies.database import close_db_connection
 from api.models.responses import ErrorDetail, ErrorResponse
-from api.routers import ad_accounts, health
+from api.routers import ad_accounts, ad_control, health, insights, predictions
 from utils.db import init_db
 
 
@@ -78,6 +78,9 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # Include routers
 app.include_router(health.router)
 app.include_router(ad_accounts.router)
+app.include_router(insights.router)
+app.include_router(predictions.router)
+app.include_router(ad_control.router)
 
 
 @app.get("/")
