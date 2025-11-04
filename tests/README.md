@@ -287,3 +287,57 @@ For issues or questions:
 - Check the main project README
 - Review API documentation at http://localhost:8000/docs
 - Check test output for detailed error messages
+### 3. Rule Engine Demo & Mock Utilities
+
+#### Rule Execution Demo
+**File:** `run_demo_rule.py`
+
+Run the demo “spend guard” rule either with live data (requires DB credentials) or using JSON mock contexts.
+
+```bash
+# Live evaluation (requires TEST_AD_ACCOUNT_ID / TEST_AD_ID or CLI args)
+uv run python tests/run_demo_rule.py \
+  --ad-account-id act_123456789 \
+  --ad-id 987654321
+
+# Replay using a mock context file
+uv run python tests/run_demo_rule.py \
+  --mock-context tests/mocks/act_123456789/rule_context_987654321.json
+```
+
+Useful flags:
+- `--dump-context context.json` saves the fetched context snapshot (live mode).
+- `--dump-execution execution.json` saves the full execution payload.
+
+#### Mock Data Generator
+**File:** `generate_mock_data.py`
+
+Fetch rule execution contexts for ads and save them as JSON mock files.
+
+```bash
+# List ads under an account
+uv run python tests/generate_mock_data.py \
+  --ad-account-id act_123456789 \
+  --list-ads
+
+# Generate a mock for a single ad (inject structured synthetic data if empty)
+uv run python tests/generate_mock_data.py \
+  --ad-account-id act_123456789 \
+  --ad-id 987654321 \
+  --output tests/mocks/act_123456789/rule_context_987654321.json \
+  --synthesize-if-empty \
+  --pretty
+
+# Batch-generate mocks for all ads under the account
+uv run python tests/generate_mock_data.py \
+  --ad-account-id act_123456789 \
+  --batch \
+  --output-dir tests/mocks/act_123456789 \
+  --synthesize-if-empty \
+  --pretty
+```
+
+Additional options:
+- `--anonymize` replaces IDs with placeholder tokens.
+- `--ml-template models/feat.feather` attaches a sampled ML feature row (optional).
+- Synthetic data spans the most recent 14 days when `--synthesize-if-empty` is used.

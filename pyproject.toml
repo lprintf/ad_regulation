@@ -5,6 +5,7 @@ description = "Automated Facebook advertising regulation system with ML-powered 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "apscheduler>=3.10.4",
     "beanie>=2.0.0",
     "facebook-business>=23.0.3",
     "fastapi>=0.115.0",

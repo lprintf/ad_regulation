@@ -107,6 +107,61 @@ Get details of a specific ad account.
 
 ---
 
+### Rule Engine
+
+#### Create Rule Definition
+
+**POST** `/rules/definitions`
+
+Create or publish a rule definition. The request body should align with the rule engine data model (name, code, parameters).
+
+#### List Rule Definitions
+
+**GET** `/rules/definitions`
+
+Retrieve existing rules. Optional query parameter `status` filters by `draft`, `published`, or `disabled`.
+
+#### Update Rule Definition
+
+**PATCH** `/rules/definitions/{rule_id}`
+
+Modify metadata, status, or code for a rule.
+
+#### Create Rule Binding
+
+**POST** `/rules/bindings`
+
+Bind a rule to an entity (ad/adset/campaign/account). Requires `rule_id`, `entity_type`, `entity_id`, optional metadata (e.g. `{"ad_account_id": "act_..."}`).
+
+#### List Rule Bindings
+
+**GET** `/rules/bindings`
+
+Filters: `rule_id`, `entity_id`, `active_only`.
+
+#### Update / Delete Binding
+
+- **PATCH** `/rules/bindings/{binding_id}` – update metadata or activation status.
+- **DELETE** `/rules/bindings/{binding_id}` – remove binding.
+
+#### Execute Rule
+
+**POST** `/rules/execute`
+
+Trigger a rule execution manually.
+- Provide `binding_id` *or* `rule_id` with inline `context`.
+- `trigger` defaults to `manual`, set to `test` for sandbox runs.
+
+#### Execution Logs
+
+**GET** `/rules/executions`
+
+List recent execution logs (default 50, configurable via `limit`).
+
+Each log includes rule name, binding info, status, actions, reasons, and captured metrics/context.
+
+---
+
 ## Error Responses
 
 All errors follow this format:
@@ -151,6 +206,12 @@ curl -H "X-User-Id: user123" http://localhost:8000/ad-accounts/act_1243925423619
 python test_api.py
 ```
 
+### Rule Engine Utilities
+
+- `tests/run_demo_rule.py` – interactively run the demo “spend guard” rule with live data or JSON mock contexts.  
+  Supports `--dump-context` / `--dump-execution` for saving payloads.
+- `tests/generate_mock_data.py` – generate mock contexts from real ads (`--batch`, `--list-ads`, `--synthesize-if-empty`, `--anonymize`).
+
 ### Using Interactive Docs
 
 FastAPI provides interactive API documentation:
@@ -167,8 +228,7 @@ FastAPI provides interactive API documentation:
 - `GET /ad-accounts/{account_id}/insights/daily` - Daily aggregated insights
 
 ### Ad Evaluation
-- `POST /evaluate/ml` - ML-based ad performance evaluation
-- `POST /evaluate/rules` - Rule-based ad evaluation
+- `POST /evaluate/ml` - ML-based ad performance evaluation (prototype available via `/predictions`)
 - `POST /evaluate/hybrid` - Combined ML + rules evaluation
 
 ### Ad Control

@@ -8,10 +8,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.dependencies.database import close_db_connection
 from api.models.responses import ErrorDetail, ErrorResponse
-from api.routers import ad_accounts, ad_control, health, insights, predictions
+from api.routers import ad_accounts, ad_control, fb_auth, health, insights, predictions, rules
+from api.services.rule_engine_service import RuleEngineService
+from api.services.rule_scheduler import start_rule_scheduler, stop_rule_scheduler
 from utils.db import init_db
 
 
@@ -24,10 +27,16 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database connection
     await init_db()
     print("✓ Database initialized")
+    await RuleEngineService.ensure_demo_rule_seed()
+    print("✓ Demo rule seeded (if missing)")
+    await start_rule_scheduler()
+    print("✓ Rule scheduler started")
 
     yield
 
     # Shutdown: Close database connection
+    await stop_rule_scheduler()
+    print("✓ Rule scheduler stopped")
     await close_db_connection()
     print("✓ Database connection closed")
 
@@ -38,6 +47,21 @@ app = FastAPI(
     description="Automated Facebook advertising regulation system with ML-powered evaluation",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+allowed_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -81,6 +105,8 @@ app.include_router(ad_accounts.router)
 app.include_router(insights.router)
 app.include_router(predictions.router)
 app.include_router(ad_control.router)
+app.include_router(rules.router)
+app.include_router(fb_auth.router)
 
 
 @app.get("/")
