@@ -1,4 +1,5 @@
 from typing import Dict
+import asyncio
 
 from facebook_business.adobjects.adaccount import AdAccount
 from facebook_business.api import FacebookAdsApi
@@ -34,8 +35,11 @@ class FacebookAdsApiFlyweightFactory:
             raise ValueError(f"No FB app auth found for ad account '{ad_account_id}'")
 
         print(f"[DEBUG] Initializing API with app_id: {fb_app_auth.app_id}")
-        return FacebookAdsApi.init(
-            fb_app_auth.app_id, fb_app_auth.app_secret, fb_app_auth.access_token
+        return await asyncio.to_thread(
+            FacebookAdsApi.init,
+            fb_app_auth.app_id,
+            fb_app_auth.app_secret,
+            fb_app_auth.access_token,
         )
 
     def pop(self, ad_account_id: str) -> FacebookAdsApi | None:

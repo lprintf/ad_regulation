@@ -22,6 +22,16 @@ const navItems = [
     description: 'APScheduler 任务状态与延迟'
   },
   {
+    label: '洞察数据',
+    to: '/insights/data',
+    description: '查询已入库的洞察指标明细'
+  },
+  {
+    label: '洞察同步',
+    to: '/insights/sync',
+    description: '历史数据同步状态与手动重试'
+  },
+  {
     label: 'FB 授权',
     to: '/integrations/facebook',
     description: '管理 Facebook App Token 与广告账户'

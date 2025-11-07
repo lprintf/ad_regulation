@@ -247,6 +247,62 @@ python baseline/data_build.py
    - Use FastAPI's Depends() for database connections, user context
    - Singleton pattern for model loading and API client factories
 
+## Entity Names Synchronization System
+
+The system includes an on-demand entity name synchronization feature for displaying human-readable names (Campaign, AdSet, Ad) in the insights data interface instead of just IDs.
+
+### Architecture
+
+1. **Database Storage** (`AdEntityNamesDocument` in `utils/db.py`)
+   - Stores entity names with fields: `account_id`, `entity_type`, `entity_id`, `entity_name`
+   - Includes status info: `configured_status`, `effective_status`
+   - **CRITICAL**: The unique key is `(account_id, entity_type, entity_id)` - all three fields must match
+
+2. **Synchronization Service** (`api/services/entity_names_sync_service.py`)
+   - Fetches entity names from Facebook API on demand
+   - Uses exponential backoff retry for rate limiting (error code 80004)
+   - Implements batch writing with periodic commits (every 50 records)
+   - **Key Fix (2025-11-06)**: Added `account_id` to upsert query filter to prevent cross-account data corruption
+
+3. **Query Service** (`api/services/insights_service.py`)
+   - `_attach_entity_names()` method fetches names from database and attaches to insights
+   - **Key Fix (2025-11-06)**: Added `account_id` filter when querying entity names to prevent wrong account data
+   - For campaign/adset aggregation queries, initializes all name fields to `None` before attachment
+
+4. **API Endpoint** (`POST /insights/sync-entity-names`)
+   - Accepts `ad_account_id`, `entity_ids[]`, and `entity_type` parameters
+   - Returns sync statistics: `{synced, failed, total, rate_limited}`
+
+5. **Frontend Auto-Sync** (`frontend/src/features/insights-data/InsightsDataPage.tsx`)
+   - Automatically detects unnamed entities when insights data loads
+   - Triggers sync for all unnamed entities in the current query
+   - **Key Fix (2025-11-06)**: Uses `queryClient.invalidateQueries()` to force cache invalidation after sync
+   - Provides manual "刷新实体名称" button for retry
+
+### Common Issues and Solutions
+
+**Issue 1: Names show as `null` after successful sync**
+- **Root Cause**: React Query cache not invalidated after sync
+- **Solution**: Use `queryClient.invalidateQueries()` before `refetch()` to force fresh data from server
+- **Implementation**: Line 290 and 476 in `InsightsDataPage.tsx`
+
+**Issue 2: Wrong entity names appear for different accounts**
+- **Root Cause**: `account_id` not included in database query/upsert filters
+- **Solution**: Always include `account_id` in both upsert filter and query filter
+- **Implementation**: Lines 213-216 in `entity_names_sync_service.py` and lines 516, 526, 536 in `insights_service.py`
+
+**Issue 3: Rate limiting from Facebook API**
+- **Root Cause**: Too many API calls in short time (error 80004)
+- **Solution**: Exponential backoff with configurable delay (default 2s base, max 3 retries)
+- **Implementation**: Lines 116-132 in `entity_names_sync_service.py`
+
+### Best Practices
+
+1. **Always filter by account_id**: When querying or upserting entity names, include `account_id` in filters
+2. **Invalidate cache after data changes**: Use `queryClient.invalidateQueries()` when entity names are updated
+3. **Handle rate limiting gracefully**: Display user-friendly messages and allow retry
+4. **Initialize name fields**: For aggregation queries, always initialize `ad_name`, `adset_name`, `campaign_name` to `None`
+
 ## Important Notes
 
 - Ad account IDs have `act_` prefix in Facebook API but may be stored without it
@@ -278,7 +334,7 @@ All endpoints require the `X-User-Id` header for user authentication.
 - `GET /ad-accounts/{account_id}` - Get specific ad account details
 
 #### Insights Data (Synchronous)
-- `GET /insights/sync` - Fetch insights data immediately
+- `GET /insights/sync` - Fetch insights data immediately (combines database + real-time Facebook API)
   - Query parameters:
     - `ad_account_id` (required): Ad account ID
     - `since` (required): Start date (YYYY-MM-DD)
@@ -286,6 +342,26 @@ All endpoints require the `X-User-Id` header for user authentication.
     - `level` (optional): Aggregation level (ad/adset/campaign), default: "ad"
     - `time_increment` (optional): Time granularity (1=daily, null=aggregate)
     - `breakdowns` (optional): Breakdown dimensions (e.g., "country", "hourly_stats_aggregated_by_advertiser_time_zone")
+  - Data source: MongoDB (historical data) + Facebook API (latest 3 days)
+
+#### Insights Data (Database Query)
+- `GET /insights/query` - Query insights data from MongoDB only (recommended for viewing historical data)
+  - Query parameters:
+    - `ad_account_id` (required): Ad account ID (with or without act_ prefix)
+    - `since` (required): Start date (YYYY-MM-DD)
+    - `until` (required): End date (YYYY-MM-DD)
+    - `level` (optional): Aggregation level - "ad", "adset", or "campaign" (default: "ad")
+    - `time_increment` (optional): Time granularity (1=daily, currently only supports 1)
+    - `breakdowns` (optional): Currently not supported
+  - Data source: MongoDB only (no Facebook API calls)
+  - Use cases:
+    - View already synced historical data
+    - Fast queries without API timeout risks
+    - Frontend "Insights Data Browser" page uses this endpoint
+  - Response structure varies by level:
+    - **Ad level** (`level="ad"`): Returns individual ad data with `ad_id` populated, `adset_id` and `campaign_id` as null
+    - **AdSet level** (`level="adset"`): Returns aggregated data by adset_id with both `ad_id` and `adset_id` populated (same value), `campaign_id` as null
+    - **Campaign level** (`level="campaign"`): Returns aggregated data by campaign_id with both `ad_id` and `campaign_id` populated (same value), `adset_id` as null
 
 #### Insights Data (Asynchronous)
 - `POST /insights/async` - Create async insights job
@@ -343,25 +419,43 @@ All endpoints require the `X-User-Id` header for user authentication.
 
 ### Usage Examples
 
-#### Example 1: Fetch Daily Insights (Sync)
+#### Example 1: Query Database for Historical Data (Ad Level)
+```bash
+curl -X GET "http://localhost:8000/insights/query?ad_account_id=1244295750378353&since=2025-07-22&until=2025-08-31&level=ad&time_increment=1" \
+  -H "X-User-Id: user123"
+```
+
+#### Example 2: Query Database for AdSet-Level Aggregated Data
+```bash
+curl -X GET "http://localhost:8000/insights/query?ad_account_id=1244295750378353&since=2025-07-22&until=2025-08-31&level=adset&time_increment=1" \
+  -H "X-User-Id: user123"
+```
+
+#### Example 3: Query Database for Campaign-Level Aggregated Data
+```bash
+curl -X GET "http://localhost:8000/insights/query?ad_account_id=1244295750378353&since=2025-07-22&until=2025-08-31&level=campaign&time_increment=1" \
+  -H "X-User-Id: user123"
+```
+
+#### Example 4: Fetch Daily Insights (Sync - combines DB + API)
 ```bash
 curl -X GET "http://localhost:8000/insights/sync?ad_account_id=act_123&since=2025-10-01&until=2025-10-20&time_increment=1" \
   -H "X-User-Id: user123"
 ```
 
-#### Example 2: Fetch Hourly Insights by Advertiser Time Zone (Sync)
+#### Example 5: Fetch Hourly Insights by Advertiser Time Zone (Sync)
 ```bash
 curl -X GET "http://localhost:8000/insights/sync?ad_account_id=act_123&since=2025-10-20&until=2025-10-20&breakdowns=hourly_stats_aggregated_by_advertiser_time_zone" \
   -H "X-User-Id: user123"
 ```
 
-#### Example 3: Fetch Country-Level Insights (Sync)
+#### Example 6: Fetch Country-Level Insights (Sync)
 ```bash
 curl -X GET "http://localhost:8000/insights/sync?ad_account_id=act_123&since=2025-10-01&until=2025-10-20&time_increment=1&breakdowns=country" \
   -H "X-User-Id: user123"
 ```
 
-#### Example 4: Large Data Fetch (Async)
+#### Example 7: Large Data Fetch (Async)
 ```bash
 # Step 1: Create async job
 curl -X POST "http://localhost:8000/insights/async" \
@@ -388,7 +482,7 @@ curl -X GET "http://localhost:8000/insights/async/12345678/result?ad_account_id=
   -H "X-User-Id: user123"
 ```
 
-#### Example 5: Evaluate All Ads with ML Model
+#### Example 8: Evaluate All Ads with ML Model
 ```bash
 # Evaluate all ad accounts
 curl -X POST "http://localhost:8000/predictions/evaluate" \
@@ -423,15 +517,15 @@ curl -X POST "http://localhost:8000/predictions/evaluate" \
 # }
 ```
 
-#### Example 6: Evaluate Specific Ad Account
+#### Example 9: Evaluate Specific Ad Account
 ```bash
 curl -X GET "http://localhost:8000/predictions/evaluate/act_123?lookback_days=10" \
   -H "X-User-Id: user123"
 
-# Response: Same format as Example 5, but only for the specified account
+# Response: Same format as Example 8, but only for the specified account
 ```
 
-#### Example 7: Get Ad Status
+#### Example 10: Get Ad Status
 ```bash
 curl -X GET "http://localhost:8000/ad-control/status?ad_account_id=1279567647104057&ad_id=120234815168290189" \
   -H "X-User-Id: user123"
@@ -450,7 +544,7 @@ curl -X GET "http://localhost:8000/ad-control/status?ad_account_id=1279567647104
 # }
 ```
 
-#### Example 8: Start/Stop Ad
+#### Example 11: Start/Stop Ad
 ```bash
 # Start an ad
 curl -X POST "http://localhost:8000/ad-control/start" \
@@ -471,7 +565,7 @@ curl -X POST "http://localhost:8000/ad-control/stop" \
   }'
 ```
 
-#### Example 9: Update Ad Name and Budget
+#### Example 12: Update Ad Name and Budget
 ```bash
 # Update ad name
 curl -X POST "http://localhost:8000/ad-control/update-name" \
@@ -494,7 +588,7 @@ curl -X POST "http://localhost:8000/ad-control/adset/update-budget" \
   }'
 ```
 
-#### Example 10: Get Account Activities (Activity Log / Audit Trail)
+#### Example 13: Get Account Activities (Activity Log / Audit Trail)
 ```bash
 # Get all account activities (last 100 records)
 curl -X GET "http://localhost:8000/ad-control/activities?ad_account_id=1279567647104057&limit=100" \

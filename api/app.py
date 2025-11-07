@@ -15,6 +15,10 @@ from api.models.responses import ErrorDetail, ErrorResponse
 from api.routers import ad_accounts, ad_control, fb_auth, health, insights, predictions, rules
 from api.services.rule_engine_service import RuleEngineService
 from api.services.rule_scheduler import start_rule_scheduler, stop_rule_scheduler
+from api.services.insights_sync_scheduler import (
+    start_insights_sync_scheduler,
+    stop_insights_sync_scheduler,
+)
 from utils.db import init_db
 
 
@@ -31,12 +35,16 @@ async def lifespan(app: FastAPI):
     print("✓ Demo rule seeded (if missing)")
     await start_rule_scheduler()
     print("✓ Rule scheduler started")
+    await start_insights_sync_scheduler()
+    print("✓ Insights sync scheduler started")
 
     yield
 
     # Shutdown: Close database connection
     await stop_rule_scheduler()
     print("✓ Rule scheduler stopped")
+    await stop_insights_sync_scheduler()
+    print("✓ Insights sync scheduler stopped")
     await close_db_connection()
     print("✓ Database connection closed")
 

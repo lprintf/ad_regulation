@@ -15,6 +15,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from api.services.rule_engine_service import RuleEngineService
+from api.services.scheduler_state_store import (
+    RULE_SCHEDULER_NAMESPACE,
+    load_namespace,
+    save_namespace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +64,7 @@ class JobMetrics:
 class SchedulerJobConfig:
     cron_kwargs: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    is_paused: bool = False
 
     def cron_expression(self) -> str:
         if not self.cron_kwargs:
@@ -119,6 +125,49 @@ _job_configs: dict[str, SchedulerJobConfig] = {
         cron_kwargs={"hour": "3", "minute": "30"}, metadata={"inactive_days": 7}
     ),
 }
+
+
+def _serialize_configs_for_store() -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for job_id, config in _job_configs.items():
+        payload[job_id] = {
+            "cron_kwargs": dict(config.cron_kwargs),
+            "metadata": dict(config.metadata),
+            "is_paused": bool(config.is_paused),
+        }
+    return payload
+
+
+def _persist_configs() -> None:
+    save_namespace(RULE_SCHEDULER_NAMESPACE, _serialize_configs_for_store())
+
+
+def _hydrate_configs_from_store() -> None:
+    stored = load_namespace(RULE_SCHEDULER_NAMESPACE)
+    for job_id, raw_config in stored.items():
+        if not isinstance(raw_config, dict):
+            continue
+
+        config = _job_configs.setdefault(job_id, SchedulerJobConfig())
+
+        cron_kwargs = raw_config.get("cron_kwargs")
+        if isinstance(cron_kwargs, dict):
+            config.cron_kwargs = dict(cron_kwargs)
+
+        metadata = raw_config.get("metadata")
+        if isinstance(metadata, dict):
+            config.metadata = dict(metadata)
+
+        is_paused = raw_config.get("is_paused")
+        if isinstance(is_paused, bool):
+            config.is_paused = is_paused
+
+        if config.metadata:
+            metrics = _job_metrics.setdefault(job_id, JobMetrics())
+            metrics.metadata = dict(config.metadata)
+
+
+_hydrate_configs_from_store()
 
 SchedulerJobHandler = Callable[[dict[str, Any] | None], Awaitable[None]]
 _job_handlers: dict[str, SchedulerJobHandler] = {}
@@ -222,14 +271,15 @@ async def _execute_job(
 
 def _serialize_job(job: Job) -> dict[str, Any]:
     metrics = _job_metrics.get(job.id, JobMetrics())
-    if job.next_run_time is None:
+    config = _job_configs.setdefault(job.id, SchedulerJobConfig())
+
+    if config.is_paused or job.next_run_time is None:
         status = "paused"
     elif metrics.last_status == "error":
         status = "error"
     else:
         status = "running"
 
-    config = _job_configs.setdefault(job.id, SchedulerJobConfig())
     return {
         "id": job.id,
         "name": _JOB_DISPLAY_NAMES.get(job.id, job.id),
@@ -250,6 +300,7 @@ async def start_rule_scheduler() -> AsyncIOScheduler:
         return _scheduler
 
     _scheduler = AsyncIOScheduler(job_defaults={"misfire_grace_time": 300})
+    paused_jobs: list[str] = []
     for job_id, handler in _job_handlers.items():
         config = _job_configs.setdefault(job_id, SchedulerJobConfig())
         if not config.cron_kwargs:
@@ -259,15 +310,23 @@ async def start_rule_scheduler() -> AsyncIOScheduler:
         cron_kwargs = dict(config.cron_kwargs)
         timezone_arg = cron_kwargs.pop("timezone", None)
         trigger = CronTrigger(timezone=timezone_arg, **cron_kwargs)
-        _scheduler.add_job(
+        job = _scheduler.add_job(
             handler,
             trigger=trigger,
             id=job_id,
             replace_existing=True,
             kwargs={"config": config.metadata.copy()},
         )
+        if config.is_paused:
+            paused_jobs.append(job_id)
 
     _scheduler.start()
+    for job_id in paused_jobs:
+        try:
+            _scheduler.pause_job(job_id)
+        except JobLookupError:
+            logger.warning("Failed to restore paused state for job %s", job_id)
+
     logger.info(
         "Rule scheduler started with jobs: %s",
         [job.id for job in _scheduler.get_jobs()],
@@ -304,6 +363,7 @@ def update_scheduler_task(
         raise ValueError(f"Scheduler task {task_id} not found")
 
     config = _job_configs.setdefault(task_id, SchedulerJobConfig())
+    state_changed = False
 
     if cron_expression is not None:
         cron_kwargs = _parse_cron_expression(cron_expression)
@@ -315,6 +375,9 @@ def update_scheduler_task(
 
         job = _scheduler.reschedule_job(task_id, trigger=trigger)
         config.cron_kwargs = cron_kwargs
+        if config.is_paused:
+            _scheduler.pause_job(task_id)
+        state_changed = True
 
     if metadata is not None:
         if not isinstance(metadata, dict):
@@ -323,10 +386,14 @@ def update_scheduler_task(
         _scheduler.modify_job(task_id, kwargs={"config": metadata.copy()})
         metrics = _job_metrics.setdefault(task_id, JobMetrics())
         metrics.metadata = metadata
+        state_changed = True
 
     job = _scheduler.get_job(task_id)
     if job is None:
         raise ValueError(f"Scheduler task {task_id} not found")
+
+    if state_changed:
+        _persist_configs()
     return _serialize_job(job)
 
 
@@ -338,6 +405,10 @@ def pause_scheduler_task(task_id: str) -> None:
         logger.info("Paused scheduler task %s", task_id)
     except JobLookupError as exc:
         raise ValueError(f"Scheduler task {task_id} not found") from exc
+    config = _job_configs.setdefault(task_id, SchedulerJobConfig())
+    if not config.is_paused:
+        config.is_paused = True
+        _persist_configs()
 
 
 def resume_scheduler_task(task_id: str) -> None:
@@ -348,6 +419,10 @@ def resume_scheduler_task(task_id: str) -> None:
         logger.info("Resumed scheduler task %s", task_id)
     except JobLookupError as exc:
         raise ValueError(f"Scheduler task {task_id} not found") from exc
+    config = _job_configs.setdefault(task_id, SchedulerJobConfig())
+    if config.is_paused:
+        config.is_paused = False
+        _persist_configs()
 
 
 async def run_scheduler_task_now(task_id: str) -> None:

@@ -1,9 +1,10 @@
 from datetime import datetime
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Type
 
 from beanie import Document, Link, init_beanie
 from pydantic import Field
 from pymongo import AsyncMongoClient, IndexModel
+from pymongo.asynchronous.collection import AsyncCollection
 
 from config import MONGODB_DB_NAME, MONGODB_URL
 from utils.schemas.ad_account import ADAccount, FbAppAuth, FbAppTokenInfo
@@ -135,6 +136,107 @@ class RuleExecutionLogDocument(Document):
         ]
 
 
+class InsightsDailyDocument(Document):
+    account_id: str
+    campaign_id: str | None = None
+    adset_id: str | None = None
+    ad_id: str
+    date_start: datetime
+
+    spend: float = 0.0
+    impressions: int = 0
+    reach: int = 0
+    clicks: int = 0
+    inline_link_clicks: int = 0
+    outbound_clicks: int = 0
+    landing_page_view: int = 0
+    onsite_web_checkout: int = 0
+    onsite_web_add_to_cart: int = 0
+    onsite_web_purchase: int = 0
+    onsite_web_checkout_value: float = 0.0
+    onsite_web_add_to_cart_value: float = 0.0
+    onsite_web_purchase_value: float = 0.0
+
+    fetched_range_start: datetime | None = None
+    fetched_range_end: datetime | None = None
+    ingested_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "insights_daily"
+        indexes = [
+            IndexModel([("ad_id", 1), ("date_start", 1)], unique=True),
+            IndexModel([("account_id", 1), ("date_start", 1)]),
+            IndexModel([("campaign_id", 1), ("date_start", 1)]),
+            IndexModel([("adset_id", 1), ("date_start", 1)]),
+        ]
+
+
+class InsightsSyncLogDocument(Document):
+    date: datetime
+    status: Literal["pending", "running", "success", "failed"] = "pending"
+    mode: Literal["auto", "manual"] = "auto"
+    triggered_by: str | None = None
+    attempts: int = 0
+    last_error: str | None = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    synced_at: datetime | None = None
+
+    class Settings:
+        name = "insights_sync_log"
+        indexes = [
+            IndexModel("date", unique=True),
+            IndexModel([("status", 1), ("date", -1)]),
+        ]
+
+
+class InsightsSyncStateDocument(Document):
+    account_id: str
+    last_synced_at: datetime | None = None
+    last_synced_date: datetime | None = None
+    initial_requested_since: datetime | None = None
+    obs_since: datetime | None = None
+    obs_until: datetime | None = None
+    last_status: Literal["idle", "running", "success", "failed"] = "idle"
+    last_error: str | None = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "insights_sync_state"
+        indexes = [
+            IndexModel("account_id", unique=True),
+        ]
+
+
+class AdEntityNamesDocument(Document):
+    """
+    存储 Facebook 广告实体（Campaign, AdSet, Ad）的名称
+    用于在洞察数据界面显示实体名称而非ID
+    """
+    account_id: str
+    entity_type: Literal["campaign", "adset", "ad"]
+    entity_id: str
+    entity_name: str
+
+    # 可选的状态信息
+    configured_status: str | None = None
+    effective_status: str | None = None
+
+    # 元数据
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "ad_entity_names"
+        indexes = [
+            IndexModel([("entity_type", 1), ("entity_id", 1)], unique=True),
+            IndexModel("account_id"),
+            IndexModel([("account_id", 1), ("entity_type", 1)]),
+        ]
+
+
 async def init_db(mongodb_url=MONGODB_URL):
     """Initialize MongoDB connection and Beanie ODM"""
     global mongo_client, mongo_database
@@ -154,6 +256,10 @@ async def init_db(mongodb_url=MONGODB_URL):
             RuleDefinitionDocument,
             RuleBindingDocument,
             RuleExecutionLogDocument,
+            InsightsDailyDocument,
+            InsightsSyncLogDocument,
+            InsightsSyncStateDocument,
+            AdEntityNamesDocument,
         ],
     )
 
@@ -169,3 +275,43 @@ async def get_all_ad_account_documents(fetch_links=True) -> List[ADAccountDocume
     ad_account_documents = ADAccountDocument.find(fetch_links=fetch_links)
     ad_account_documents_list = await ad_account_documents.to_list()
     return ad_account_documents_list
+
+
+def _resolve_collection_name(document_cls: Type[Document]) -> str:
+    settings = getattr(document_cls, "Settings", None)
+    if settings and getattr(settings, "name", None):
+        return settings.name  # type: ignore[attr-defined]
+    return document_cls.__name__
+
+
+def get_async_collection(name: str) -> AsyncCollection:
+    if mongo_database is None:
+        raise RuntimeError("MongoDB is not initialized; call init_db() first.")
+    return mongo_database[name]
+
+
+def get_document_collection(document_cls: Type[Document]) -> AsyncCollection:
+    return get_async_collection(_resolve_collection_name(document_cls))
+
+
+async def drop_insights_indexes() -> list[str]:
+    """Drop all non-default indexes on the insights collection."""
+    collection = get_document_collection(InsightsDailyDocument)
+    info = await collection.index_information()
+    dropped: list[str] = []
+    for name in info:
+        if name == "_id_":
+            continue
+        await collection.drop_index(name)
+        dropped.append(name)
+    return dropped
+
+
+async def ensure_insights_indexes() -> int:
+    """Ensure insights collection indexes exist."""
+    collection = get_document_collection(InsightsDailyDocument)
+    indexes = getattr(InsightsDailyDocument.Settings, "indexes", []) or []
+    if not indexes:
+        return 0
+    await collection.create_indexes(indexes)
+    return len(indexes)

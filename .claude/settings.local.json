@@ -5,7 +5,19 @@
       "Bash(echo:*)",
       "Bash(curl:*)",
       "Bash(python:*)",
-      "Bash(uv run python:*)"
+      "Bash(uv run python:*)",
+      "Bash(npm install:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "Bash(D:/projects/ad_regulation/api/routers/insights.py)",
+      "Bash(uv run uvicorn:*)",
+      "Bash(for bash_id in c3391f 5c334e 0d1c73 58d62d dbb6c1 36dde4)",
+      "Bash(do echo \"Would kill $bash_id\")",
+      "Bash(done)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(for:*)",
+      "Bash(do echo \"Checking shell $bash_id...\")"
     ],
     "deny": [],
     "ask": []

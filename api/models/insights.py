@@ -3,6 +3,7 @@ Request and response models for Insights endpoints.
 """
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -38,7 +39,26 @@ class InsightMetrics(BaseModel):
 class InsightRecord(BaseModel):
     """Single insight data record."""
 
-    ad_id: str = Field(..., description="Ad ID")
+    ad_id: str = Field(
+        ...,
+        description="Entity ID - represents ad_id, adset_id, or campaign_id depending on query level",
+    )
+    adset_id: str | None = Field(
+        None, description="AdSet ID (populated when level=adset)"
+    )
+    campaign_id: str | None = Field(
+        None, description="Campaign ID (populated when level=campaign)"
+    )
+    # Entity names for better readability
+    ad_name: str | None = Field(
+        None, description="Ad name (if available)"
+    )
+    adset_name: str | None = Field(
+        None, description="AdSet name (populated when level=adset, if available)"
+    )
+    campaign_name: str | None = Field(
+        None, description="Campaign name (populated when level=campaign, if available)"
+    )
     date: str = Field(..., description="Date of the insight (YYYY-MM-DD or datetime)")
     metrics: InsightMetrics = Field(..., description="Insight metrics")
 
@@ -112,6 +132,74 @@ class AsyncJobStatusResponse(BaseModel):
     )
     created_at: str | None = Field(None, description="Job creation timestamp")
     updated_at: str | None = Field(None, description="Last update timestamp")
+
+
+class SyncStatus(str, Enum):
+    """Status enum for historical insights sync."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
+class InsightAccountSyncStatus(BaseModel):
+    """Per-account insights sync state."""
+
+    account_id: str = Field(..., description="Ad account ID")
+    account_name: str | None = Field(None, description="Ad account display name")
+    status: SyncStatus = Field(..., description="Latest sync status")
+    since: str | None = Field(None, description="Earliest date that data is available (YYYY-MM-DD)")
+    until: str | None = Field(None, description="Latest date synced (YYYY-MM-DD)")
+    obs_since: str | None = Field(
+        None,
+        description="Earliest since parameter observed in scheduler history (YYYY-MM-DD)",
+    )
+    obs_until: str | None = Field(
+        None,
+        description="Latest until parameter observed in scheduler history (YYYY-MM-DD)",
+    )
+    last_synced_at: str | None = Field(None, description="Timestamp when sync last succeeded")
+    last_error: str | None = Field(None, description="Most recent error message")
+    range_since: str | None = Field(None, description="Current/last sync start date")
+    range_until: str | None = Field(None, description="Current/last sync end date")
+    mode: str | None = Field(None, description="Sync strategy, e.g., sync or async")
+    trigger: str | None = Field(None, description="Trigger origin such as auto or manual")
+    triggered_by: str | None = Field(None, description="User or system identifier that initiated the sync")
+    updated_at: str | None = Field(None, description="Last time the state was updated")
+
+
+class InsightsAccountSyncResponse(BaseModel):
+    """Response containing per-account sync states."""
+
+    items: list[InsightAccountSyncStatus] = Field(
+        ..., description="List of account sync statuses"
+    )
+
+
+class InsightsSyncTriggerRequest(BaseModel):
+    """Request payload to trigger manual sync for specific accounts and date range."""
+
+    account_ids: list[str] | None = Field(
+        default=None,
+        description="Specific account IDs to sync. If omitted, apply to all accounts.",
+    )
+    since: str = Field(..., description="Start date (YYYY-MM-DD)")
+    until: str = Field(..., description="End date (YYYY-MM-DD)")
+
+
+class InsightsSyncTriggerResponse(BaseModel):
+    """Response payload summarizing manual sync invocation."""
+
+    total_accounts: int = Field(..., description="Total accounts considered for this sync request")
+    processed_accounts: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Per-account sync summary for successful executions",
+    )
+    failed_accounts: dict[str, str] = Field(
+        default_factory=dict,
+        description="Per-account error messages for failed executions",
+    )
 
 
 # ===== Prediction Models =====

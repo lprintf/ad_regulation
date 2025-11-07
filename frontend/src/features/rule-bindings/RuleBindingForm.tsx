@@ -5,6 +5,7 @@ import type {
   RuleEntityType
 } from '../../types/rule-engine'
 import { mergeBindingMetadata, stripReservedMetadata } from './utils'
+import AdAccountSelect from '../../components/AdAccountSelect'
 
 export interface RuleBindingFormValues {
   ruleId: string
@@ -181,11 +182,12 @@ const RuleBindingForm = ({
 
         <label className="form-label">
           <span>所属账号 (可选)</span>
-          <input
-            className="input"
-            placeholder="act_ 开头的账号 ID"
+          <AdAccountSelect
             value={accountId}
-            onChange={event => setAccountId(event.target.value)}
+            onChange={setAccountId}
+            placeholder="act_ 开头的账号 ID"
+            inputClassName="input"
+            helperText="如果留空，将在所有账号中匹配该实体。"
           />
         </label>
       </div>

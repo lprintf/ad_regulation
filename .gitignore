@@ -25,3 +25,5 @@ data/
 output/
 test/
 tests/mocks/
+
+.vscode/

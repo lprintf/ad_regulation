@@ -1,0 +1,218 @@
+import apiClient from '../lib/apiClient'
+import type {
+  InsightAccountSyncStatus,
+  InsightRecord,
+  InsightsDataResponse,
+  InsightSyncStatus,
+  InsightSyncTriggerResult
+} from '../types/insights'
+
+const mapAccountStatusFromApi = (item: any): InsightAccountSyncStatus => {
+  const status = (item?.status ?? 'pending') as InsightSyncStatus
+  return {
+    accountId: item?.account_id ?? item?.accountId ?? '',
+    accountName: item?.account_name ?? item?.accountName ?? null,
+    since: item?.since ?? item?.data_since ?? item?.initial_requested_since ?? null,
+    status,
+    until: item?.until ?? item?.data_until ?? item?.last_synced_date ?? null,
+    obsSince: item?.obs_since ?? item?.obsSince ?? null,
+    obsUntil: item?.obs_until ?? item?.obsUntil ?? null,
+    lastSyncedAt: item?.last_synced_at ?? item?.lastSyncedAt ?? null,
+    rangeSince: item?.range_since ?? item?.rangeSince ?? null,
+    rangeUntil: item?.range_until ?? item?.rangeUntil ?? null,
+    mode: item?.mode ?? null,
+    trigger: item?.trigger ?? item?.triggerSource ?? null,
+    triggeredBy: item?.triggered_by ?? item?.triggeredBy ?? null,
+    lastError: item?.last_error ?? item?.lastError ?? null,
+    updatedAt: item?.updated_at ?? item?.updatedAt ?? null
+  }
+}
+
+export const fetchInsightsSyncStatus = async (): Promise<InsightAccountSyncStatus[]> => {
+  const { data } = await apiClient.get('/insights/sync/accounts')
+  const payload = data?.data ?? data ?? {}
+  const items: any[] = Array.isArray(payload?.items) ? payload.items : []
+  return items.map(mapAccountStatusFromApi)
+}
+
+const mapInsightRecordFromApi = (item: any): InsightRecord => {
+  const metrics = item?.metrics ?? {}
+  return {
+    adId: item?.ad_id ?? item?.adId ?? '',
+    adsetId: item?.adset_id ?? item?.adsetId ?? null,
+    campaignId: item?.campaign_id ?? item?.campaignId ?? null,
+    adName: item?.ad_name ?? item?.adName ?? null,
+    adsetName: item?.adset_name ?? item?.adsetName ?? null,
+    campaignName: item?.campaign_name ?? item?.campaignName ?? null,
+    date: item?.date ?? item?.date_start ?? item?.dateStart ?? '',
+    metrics: {
+      spend: Number(metrics?.spend ?? item?.spend ?? 0),
+      impressions: Number(metrics?.impressions ?? item?.impressions ?? 0),
+      reach: Number(metrics?.reach ?? item?.reach ?? 0),
+      clicks: Number(metrics?.clicks ?? item?.clicks ?? 0),
+      inlineLinkClicks: Number(
+        metrics?.inline_link_clicks ?? item?.inline_link_clicks ?? metrics?.inlineLinkClicks ?? 0
+      ),
+      outboundClicks: Number(
+        metrics?.outbound_clicks ?? item?.outbound_clicks ?? metrics?.outboundClicks ?? 0
+      ),
+      landingPageView: Number(
+        metrics?.landing_page_view ?? item?.landing_page_view ?? metrics?.landingPageView ?? 0
+      ),
+      onsiteWebCheckout: Number(
+        metrics?.onsite_web_checkout ?? item?.onsite_web_checkout ?? metrics?.onsiteWebCheckout ?? 0
+      ),
+      onsiteWebAddToCart: Number(
+        metrics?.onsite_web_add_to_cart ??
+          item?.onsite_web_add_to_cart ??
+          metrics?.onsiteWebAddToCart ??
+          0
+      ),
+      onsiteWebPurchase: Number(
+        metrics?.onsite_web_purchase ??
+          item?.onsite_web_purchase ??
+          metrics?.onsiteWebPurchase ??
+          0
+      ),
+      onsiteWebCheckoutValue: Number(
+        metrics?.onsite_web_checkout_value ??
+          item?.onsite_web_checkout_value ??
+          metrics?.onsiteWebCheckoutValue ??
+          0
+      ),
+      onsiteWebAddToCartValue: Number(
+        metrics?.onsite_web_add_to_cart_value ??
+          item?.onsite_web_add_to_cart_value ??
+          metrics?.onsiteWebAddToCartValue ??
+          0
+      ),
+      onsiteWebPurchaseValue: Number(
+        metrics?.onsite_web_purchase_value ??
+          item?.onsite_web_purchase_value ??
+          metrics?.onsiteWebPurchaseValue ??
+          0
+      )
+    }
+  }
+}
+
+export interface InsightsDataQuery {
+  accountId: string
+  since: string
+  until: string
+  level?: 'ad' | 'adset' | 'campaign'
+  timeIncrement?: number | null
+  breakdowns?: string
+}
+
+export const fetchInsightsData = async (params: InsightsDataQuery): Promise<InsightsDataResponse> => {
+  const queryParams: Record<string, unknown> = {
+    ad_account_id: params.accountId,
+    since: params.since,
+    until: params.until,
+    level: params.level ?? 'ad'
+  }
+
+  if (params.timeIncrement !== undefined) {
+    queryParams.time_increment = params.timeIncrement
+  }
+
+  if (params.breakdowns) {
+    queryParams.breakdowns = params.breakdowns
+  }
+
+  // Use /insights/query to fetch from database only (no Facebook API calls)
+  const { data } = await apiClient.get('/insights/query', {
+    params: queryParams
+  })
+
+  const payload = data?.data ?? data ?? {}
+  const insights = Array.isArray(payload?.insights) ? payload.insights.map(mapInsightRecordFromApi) : []
+  const totalRecords = Number(payload?.total_records ?? payload?.totalRecords ?? insights.length)
+  const dateRange = payload?.date_range ?? payload?.dateRange ?? {
+    since: params.since,
+    until: params.until
+  }
+
+  return {
+    insights,
+    totalRecords,
+    dateRange: {
+      since: dateRange?.since ?? params.since,
+      until: dateRange?.until ?? params.until
+    }
+  }
+}
+
+export interface InsightsSyncTriggerPayload {
+  accountIds?: string[]
+  since: string
+  until: string
+}
+
+export const triggerInsightsSync = async (
+  payload: InsightsSyncTriggerPayload
+): Promise<InsightSyncTriggerResult> => {
+  const { data } = await apiClient.post('/insights/sync/trigger', payload)
+  const body = data?.data ?? data ?? {}
+  const total =
+    body?.total_accounts ??
+    body?.totalAccounts ??
+    Object.keys(body?.processed_accounts ?? body?.processedAccounts ?? {}).length
+
+  const processedSource =
+    body?.processed_accounts ?? body?.processedAccounts ?? ({} as Record<string, any>)
+  const processedEntries = Object.entries(processedSource).map(([accountId, summary]) => {
+    const normalized = (summary ?? {}) as Record<string, any>
+    return [
+      accountId,
+      {
+        mode: normalized.mode ?? 'unknown',
+        since: normalized.since ?? '',
+        until: normalized.until ?? '',
+        records: Number(normalized.records ?? 0),
+        trigger: normalized.trigger ?? null,
+        triggeredBy: normalized.triggered_by ?? normalized.triggeredBy ?? null
+      }
+    ]
+  })
+
+  const failedSource =
+    body?.failed_accounts ?? body?.failedAccounts ?? ({} as Record<string, string>)
+
+  return {
+    totalAccounts: Number(total ?? 0),
+    processedAccounts: Object.fromEntries(processedEntries),
+    failedAccounts: failedSource as Record<string, string>
+  }
+}
+
+export interface SyncEntityNamesPayload {
+  adAccountId: string
+  entityIds: string[]
+  entityType: 'ad' | 'adset' | 'campaign'
+}
+
+export const syncEntityNames = async (
+  payload: SyncEntityNamesPayload
+): Promise<{ synced: number; failed: number; total: number; rate_limited: number }> => {
+  const params = new URLSearchParams({
+    ad_account_id: payload.adAccountId,
+    entity_type: payload.entityType
+  })
+
+  // Add entity_ids as multiple query parameters
+  payload.entityIds.forEach(id => {
+    params.append('entity_ids', id)
+  })
+
+  const { data } = await apiClient.post(`/insights/sync-entity-names?${params.toString()}`)
+  const result = data?.data ?? data ?? {}
+
+  return {
+    synced: Number(result.synced ?? 0),
+    failed: Number(result.failed ?? 0),
+    total: Number(result.total ?? 0),
+    rate_limited: Number(result.rate_limited ?? 0)
+  }
+}
