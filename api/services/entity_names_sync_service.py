@@ -19,6 +19,8 @@ from utils.db import (
 )
 from utils.fb_api_flyweight_factory import get_api
 
+MAX_ENTITY_NAME_BATCH_SIZE = 50
+
 
 class EntityNamesSyncService:
     """Service for syncing ad entity names from Facebook API"""
@@ -199,6 +201,20 @@ class EntityNamesSyncService:
                 "failed_entities": [],
             }
 
+        # 去重，避免重复同步，并限制最大批次
+        normalized_ids: List[str] = []
+        seen: Set[str] = set()
+        for entity_id in entity_ids:
+            if entity_id in seen:
+                continue
+            seen.add(entity_id)
+            normalized_ids.append(entity_id)
+
+        if len(normalized_ids) > MAX_ENTITY_NAME_BATCH_SIZE:
+            raise ValueError(
+                f"最多一次同步 {MAX_ENTITY_NAME_BATCH_SIZE} 个实体，请分批请求"
+            )
+
         account_id_with_prefix = (
             account_id if account_id.startswith("act_") else f"act_{account_id}"
         )
@@ -213,7 +229,7 @@ class EntityNamesSyncService:
 
         print(f"Starting sync for {len(entity_ids)} {entity_type} entities in account {account_id_with_prefix}")
 
-        for idx, entity_id in enumerate(entity_ids, 1):
+        for idx, entity_id in enumerate(normalized_ids, 1):
             # 在请求之间添加延迟（除了第一个请求）
             if idx > 1:
                 await asyncio.sleep(batch_delay)
@@ -284,7 +300,7 @@ class EntityNamesSyncService:
         result = {
             "synced": synced,
             "failed": failed,
-            "total": len(entity_ids),
+            "total": len(normalized_ids),
             "rate_limited": rate_limited,
             "entities": synced_entities,
             "failed_entities": failed_entities,

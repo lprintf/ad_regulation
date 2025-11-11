@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Modal, message } from 'antd'
+import { Modal, message, Spin } from 'antd'
 import {
   fetchInsightsData,
   syncEntityNames,
@@ -69,6 +69,20 @@ const DATA_SOURCE_LABEL: Record<InsightsDataQuery['source'], string> = {
   hybrid: '数据库 + 实时数据'
 }
 
+const ENTITY_NAME_SYNC_BATCH_SIZE = 50
+const TABLE_PAGE_SIZE = 20
+
+const chunkArray = <T,>(items: T[], chunkSize: number): T[][] => {
+  if (chunkSize <= 0) {
+    return [items]
+  }
+  const chunks: T[][] = []
+  for (let i = 0; i < items.length; i += chunkSize) {
+    chunks.push(items.slice(i, i + chunkSize))
+  }
+  return chunks
+}
+
 const areQueriesEqual = (a: InsightsDataQuery, b: InsightsDataQuery) => {
   const normalizeFields = (fields?: string[]) => (fields?.join('|') ?? '')
   return (
@@ -115,6 +129,7 @@ const InsightsDataPage = () => {
   const [activeQuery, setActiveQuery] = useState<InsightsDataQuery | null>(null)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
 
   // The level of the currently displayed dataset.
   const resultLevel = activeQuery?.level ?? level
@@ -228,6 +243,23 @@ const InsightsDataPage = () => {
     return Array.from(grouped.values()).sort((a, b) => a.entityId.localeCompare(b.entityId))
   }, [insights, getEntityId])
 
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [aggregatedInsights])
+
+  const totalPages = Math.max(1, Math.ceil(aggregatedInsights.length / TABLE_PAGE_SIZE) || 1)
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages)
+    }
+  }, [currentPage, totalPages])
+
+  const paginatedAggregatedInsights = useMemo(() => {
+    const startIndex = (currentPage - 1) * TABLE_PAGE_SIZE
+    return aggregatedInsights.slice(startIndex, startIndex + TABLE_PAGE_SIZE)
+  }, [aggregatedInsights, currentPage])
+
   const applySyncedNamesToCache = useCallback(
     (entities: SyncedEntityName[]) => {
       if (!entities.length || !activeQuery) {
@@ -320,31 +352,57 @@ const InsightsDataPage = () => {
       console.log('[Entity Sync] Starting sync...')
 
       const syncNames = async () => {
+        const entityIdBatches = chunkArray(Array.from(unnamedEntityIds), ENTITY_NAME_SYNC_BATCH_SIZE)
+        const aggregateResult = {
+          synced: 0,
+          failed: 0,
+          rateLimited: 0,
+          entities: [] as SyncedEntityName[]
+        }
+
         try {
-          message.loading({ content: `正在获取 ${unnamedEntityIds.size} 个实体的名称...`, key: 'sync' })
+          for (let idx = 0; idx < entityIdBatches.length; idx += 1) {
+            const batchIds = entityIdBatches[idx]
+            message.loading({
+              content: `正在获取名称 ${idx + 1}/${entityIdBatches.length}（${batchIds.length} 个实体）...`,
+              key: 'sync'
+            })
 
-          const result = await syncEntityNames({
-            adAccountId: activeQuery.accountId,
-            entityIds: Array.from(unnamedEntityIds),
-            entityType: activeQuery.level ?? 'ad'
-          })
+            const result = await syncEntityNames({
+              adAccountId: activeQuery.accountId,
+              entityIds: batchIds,
+              entityType: activeQuery.level ?? 'ad'
+            })
 
-          console.log('[Entity Sync] Sync result:', result)
+            console.log(`[Entity Sync] Batch ${idx + 1} result:`, result)
 
-          // Check if rate limiting occurred
-          if (result.rateLimited > 0) {
+            aggregateResult.synced += result.synced
+            aggregateResult.failed += result.failed
+            aggregateResult.rateLimited += result.rateLimited
+            if (result.entities.length > 0) {
+              aggregateResult.entities.push(...result.entities)
+              applySyncedNamesToCache(result.entities)
+            }
+
+            if (result.rateLimited > 0) {
+              break
+            }
+          }
+
+          if (aggregateResult.rateLimited > 0) {
             message.warning({
-              content: `同步受到速率限制 (成功: ${result.synced}, 失败: ${result.failed}, 限制: ${result.rateLimited})。请稍后再试。`,
+              content: `同步受到速率限制 (成功: ${aggregateResult.synced}, 失败: ${aggregateResult.failed}, 限制: ${aggregateResult.rateLimited})。请稍后再试。`,
               key: 'sync',
               duration: 5
             })
-            // Don't refetch if rate limited, keep the query key marked to prevent continuous retries
+            // Allow retry later
+            syncedQueriesRef.current.delete(queryKey)
             return
           }
 
-          if (result.failed > 0 && result.synced === 0) {
+          if (aggregateResult.failed > 0 && aggregateResult.synced === 0) {
             message.error({
-              content: `同步失败。所有 ${result.failed} 个请求都失败了。请检查网络连接或稍后再试。`,
+              content: `同步失败。所有 ${aggregateResult.failed} 个请求都失败了。请检查网络连接或稍后再试。`,
               key: 'sync',
               duration: 5
             })
@@ -353,10 +411,10 @@ const InsightsDataPage = () => {
             return
           }
 
-          if (result.synced > 0) {
-            const successMsg = result.failed > 0
-              ? `部分同步成功 (成功: ${result.synced}, 失败: ${result.failed})`
-              : `实体名称同步完成 (成功: ${result.synced})`
+          if (aggregateResult.synced > 0) {
+            const successMsg = aggregateResult.failed > 0
+              ? `部分同步成功 (成功: ${aggregateResult.synced}, 失败: ${aggregateResult.failed})`
+              : `实体名称同步完成 (成功: ${aggregateResult.synced})`
 
             message.success({
               content: successMsg,
@@ -364,12 +422,8 @@ const InsightsDataPage = () => {
               duration: 3
             })
 
-            if (result.entities.length > 0) {
-              applySyncedNamesToCache(result.entities)
-            }
-
             // If some entities failed, remove from synced set to allow retry
-            if (result.failed > 0) {
+            if (aggregateResult.failed > 0) {
               syncedQueriesRef.current.delete(queryKey)
             }
 
@@ -653,10 +707,18 @@ const InsightsDataPage = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {aggregatedInsights.map(entity => {
+                  {paginatedAggregatedInsights.map(entity => {
                     // Find a sample record to get the name
                     const sampleRecord = insights.find(r => getEntityId(r) === entity.entityId)
                     const entityName = sampleRecord ? getEntityName(sampleRecord) : null
+                    const nameCell = entityName ? (
+                      entityName
+                    ) : (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--color-text-muted)' }}>
+                        <Spin size="small" />
+                        <span>加载中…</span>
+                      </span>
+                    )
 
                     return (
                       <tr
@@ -677,7 +739,7 @@ const InsightsDataPage = () => {
                           {entity.entityId}
                         </td>
                         <td style={{ fontWeight: entityName ? 500 : 400, color: entityName ? 'inherit' : 'var(--color-text-muted)' }}>
-                          {entityName || '(未获取名称)'}
+                          {nameCell}
                         </td>
                         <td>{entity.dateCount}</td>
                         {METRIC_COLUMNS.map(column => (
@@ -691,6 +753,55 @@ const InsightsDataPage = () => {
                 </tbody>
               </table>
             </div>
+            {aggregatedInsights.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginTop: '12px',
+                  flexWrap: 'wrap',
+                  gap: '12px'
+                }}
+              >
+                <div style={{ color: 'var(--color-text-secondary, #666)' }}>
+                  共 {aggregatedInsights.length} 条记录，每页显示 {TABLE_PAGE_SIZE} 条
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
+                    disabled={currentPage === 1}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--color-border, #d9d9d9)',
+                      backgroundColor: currentPage === 1 ? '#f5f5f5' : 'white',
+                      cursor: currentPage === 1 ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    上一页
+                  </button>
+                  <span style={{ minWidth: '90px', textAlign: 'center' }}>
+                    第 {currentPage} / {totalPages} 页
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
+                    disabled={currentPage === totalPages}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '4px',
+                      border: '1px solid var(--color-border, #d9d9d9)',
+                      backgroundColor: currentPage === totalPages ? '#f5f5f5' : 'white',
+                      cursor: currentPage === totalPages ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    下一页
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </section>
