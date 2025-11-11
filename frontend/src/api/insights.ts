@@ -316,7 +316,16 @@ export const syncEntityNames = async (
     params.append('entity_ids', id)
   })
 
-  const { data } = await apiClient.post(`/insights/sync-entity-names?${params.toString()}`)
+  // Entity-name sync can take a while (sequential FB API calls). Scale timeout with request size.
+  const baseTimeout = 30000
+  const perEntityBuffer = 1200 // ms per entity to allow API + backoff
+  const timeoutMs = Math.min(120000, Math.max(baseTimeout, payload.entityIds.length * perEntityBuffer))
+
+  const { data } = await apiClient.post(
+    `/insights/sync-entity-names?${params.toString()}`,
+    null,
+    { timeout: timeoutMs }
+  )
   const result = data?.data ?? data ?? {}
 
   const entitiesSource = Array.isArray(result.entities) ? result.entities : []
