@@ -63,7 +63,7 @@ class InsightsService:
             )
 
     @staticmethod
-    async def fetch_insights_sync(
+    async def query_insights_realtime(
         ad_account_id: str,
         since: str,
         until: str,
@@ -73,22 +73,8 @@ class InsightsService:
         fields: list[str] | None = None,
     ) -> dict[str, Any]:
         """
-        Synchronously fetch insights data from Facebook API.
+        Query insights data by combining cached (DB) and realtime Facebook API data.
 
-        Args:
-            ad_account_id: Ad account ID (with or without act_ prefix)
-            since: Start date in YYYY-MM-DD format
-            until: End date in YYYY-MM-DD format
-            level: Aggregation level (ad, adset, or campaign)
-            time_increment: Time increment (1=daily, None=aggregate)
-            breakdowns: Comma-separated breakdown dimensions
-
-        Returns:
-            Dictionary containing insights data with metrics and metadata
-
-        Raises:
-            ValueError: If parameters are invalid
-            Exception: If Facebook API call fails
         Args:
             ad_account_id: Ad account ID (with or without act_ prefix)
             since: Start date in YYYY-MM-DD format
@@ -226,7 +212,7 @@ class InsightsService:
         }
 
     @staticmethod
-    async def fetch_insights_from_last_sync(
+    async def query_insights_from_last_gap(
         ad_account_id: str,
         until: str,
         level: str = "ad",
@@ -272,7 +258,7 @@ class InsightsService:
                 realtime_since_date = until_date
 
         since_str = realtime_since_date.strftime("%Y-%m-%d")
-        return await InsightsService.fetch_insights_sync(
+        return await InsightsService.query_insights_realtime(
             ad_account_id=account_id,
             since=since_str,
             until=until,

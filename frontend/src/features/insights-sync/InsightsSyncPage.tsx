@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { fetchInsightsSyncStatus, triggerInsightsSync } from '../../api/insights'
+import { createInsightsSyncRun, fetchInsightsSyncRuns } from '../../api/insights'
 import { formatDateTime, formatRelativeTime } from '../../lib/datetime'
 import type {
   InsightAccountSyncStatus,
@@ -33,8 +33,8 @@ const InsightsSyncPage = () => {
   const [lastResult, setLastResult] = useState<InsightSyncTriggerResult | null>(null)
 
   const statusQuery = useQuery({
-    queryKey: ['insights-sync-status'],
-    queryFn: fetchInsightsSyncStatus,
+    queryKey: ['insights-sync-runs'],
+    queryFn: fetchInsightsSyncRuns,
     refetchInterval: 60_000
   })
 
@@ -72,28 +72,28 @@ const InsightsSyncPage = () => {
   }, [items, untilDate])
 
   const handleRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['insights-sync-status'] })
+    queryClient.invalidateQueries({ queryKey: ['insights-sync-runs'] })
   }
 
   const manualSyncMutation = useMutation({
-    mutationFn: triggerInsightsSync,
+    mutationFn: createInsightsSyncRun,
     onSuccess: (result: InsightSyncTriggerResult) => {
-    queryClient.invalidateQueries({ queryKey: ['insights-sync-status'] })
-    const processedCount = Object.keys(result.processedAccounts ?? {}).length
-    const failedCount = Object.keys(result.failedAccounts ?? {}).length
-    setLastResult(result)
-    setFeedback({
-      type: failedCount > 0 ? 'error' : 'success',
-      message: `本次触发 ${result.totalAccounts} 个账号，成功 ${processedCount} 个，失败 ${failedCount} 个`
-    })
-  },
-  onError: error => {
-    const message =
-      error instanceof Error ? error.message : '触发补采失败，请稍后再试'
-    setLastResult(null)
-    setFeedback({ type: 'error', message })
-  }
-})
+      queryClient.invalidateQueries({ queryKey: ['insights-sync-runs'] })
+      const processedCount = Object.keys(result.processedAccounts ?? {}).length
+      const failedCount = Object.keys(result.failedAccounts ?? {}).length
+      setLastResult(result)
+      setFeedback({
+        type: failedCount > 0 ? 'error' : 'success',
+        message: `本次触发 ${result.totalAccounts} 个账号，成功 ${processedCount} 个，失败 ${failedCount} 个`
+      })
+    },
+    onError: error => {
+      const message =
+        error instanceof Error ? error.message : '触发补采失败，请稍后再试'
+      setLastResult(null)
+      setFeedback({ type: 'error', message })
+    }
+  })
 
   const parseAccountIds = (raw: string): string[] => {
     const normalized = raw

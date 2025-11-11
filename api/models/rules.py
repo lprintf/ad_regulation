@@ -165,26 +165,3 @@ class RuleExecutionListResponse(BaseModel):
     executions: list[RuleExecutionLogResponse]
     total: int
 
-
-class SchedulerTaskResponse(BaseModel):
-    id: str
-    name: str
-    cron: str
-    status: str
-    next_run_at: datetime | None = None
-    last_run_at: datetime | None = None
-    average_latency_ms: float | None = None
-    max_latency_ms: float | None = None
-    last_error: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class SchedulerTaskUpdateRequest(BaseModel):
-    cron: str | None = Field(
-        default=None,
-        description="APScheduler cron expression in `cron[...]` format",
-    )
-    metadata: dict[str, Any] | None = Field(
-        default=None,
-        description="Custom scheduler task configuration payload",
-    )

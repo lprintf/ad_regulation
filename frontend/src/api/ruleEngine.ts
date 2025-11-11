@@ -8,6 +8,7 @@ import type {
   RuleExecutionLog,
   RuleStatus,
   SchedulerTask,
+  SchedulerNamespace,
   ExecutionTrigger
 } from '../types/rule-engine'
 
@@ -315,7 +316,7 @@ export const executeRuleManually = async (payload: {
 }
 
 export const fetchSchedulerTasks = async (): Promise<SchedulerTask[]> => {
-  const { data } = await apiClient.get('/rules/scheduler/tasks')
+  const { data } = await apiClient.get('/scheduler/tasks')
   const payload = data?.data ?? data ?? []
   if (Array.isArray(payload)) {
     return payload.map(mapSchedulerTaskFromApi)
@@ -325,21 +326,32 @@ export const fetchSchedulerTasks = async (): Promise<SchedulerTask[]> => {
     : []
 }
 
-export const updateSchedulerTaskState = async (taskId: string, action: 'pause' | 'resume') => {
-  const { data } = await apiClient.post(`/rules/scheduler/tasks/${taskId}/${action}`)
+export const updateSchedulerTaskState = async (params: {
+  namespace: SchedulerNamespace
+  taskId: string
+  action: 'pause' | 'resume'
+}) => {
+  const { namespace, taskId, action } = params
+  const { data } = await apiClient.post(`/scheduler/tasks/${namespace}/${taskId}/${action}`)
   return data?.data ?? data
 }
 
-export const runSchedulerTaskNow = async (taskId: string) => {
-  const { data } = await apiClient.post(`/rules/scheduler/tasks/${taskId}/run`)
+export const runSchedulerTaskNow = async (params: {
+  namespace: SchedulerNamespace
+  taskId: string
+}) => {
+  const { namespace, taskId } = params
+  const { data } = await apiClient.post(`/scheduler/tasks/${namespace}/${taskId}/run`)
   return data?.data ?? data
 }
 
-export const updateSchedulerTask = async (
-  taskId: string,
+export const updateSchedulerTask = async (params: {
+  namespace: SchedulerNamespace
+  taskId: string
   payload: { cron?: string; metadata?: Record<string, unknown> }
-): Promise<SchedulerTask> => {
-  const { data } = await apiClient.patch(`/rules/scheduler/tasks/${taskId}`, payload)
+}): Promise<SchedulerTask> => {
+  const { namespace, taskId, payload } = params
+  const { data } = await apiClient.patch(`/scheduler/tasks/${namespace}/${taskId}`, payload)
   const body = data?.data ?? data
   return mapSchedulerTaskFromApi(body)
 }
@@ -352,6 +364,7 @@ const mapSchedulerTaskFromApi = (item: any): SchedulerTask => {
       : undefined
 
   return {
+    namespace: (item?.namespace ?? 'rules') as SchedulerNamespace,
     id: item?.id ?? '',
     name: item?.name ?? '',
     cron: item?.cron ?? '',

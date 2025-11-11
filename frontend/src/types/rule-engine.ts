@@ -71,7 +71,10 @@ export interface RuleExecutionLog {
   errorMessage?: string
 }
 
+export type SchedulerNamespace = 'rules' | 'insights'
+
 export interface SchedulerTask {
+  namespace: SchedulerNamespace
   id: string
   name: string
   cron: string

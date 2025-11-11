@@ -94,7 +94,7 @@ async def query_insights_from_database(
     - level="adset": Aggregates ad data by adset_id and date
     - level="campaign": Aggregates ad data by campaign_id and date
 
-    Use this for viewing historical data. Use /insights/sync or /insights/jobs for fetching new data from Facebook.
+    Use this for viewing historical data. Use /insights/query or /insights/jobs for fetching new data from Facebook.
 
     Args:
         ad_account_id: Ad account ID (with or without act_ prefix)
@@ -165,16 +165,16 @@ async def query_insights_from_database(
         )
 
 
-# ===== Synchronous Endpoint =====
+# ===== Query Endpoints =====
 
 
-@router.post("/sync", response_model=SuccessResponse[InsightsResponse])
-async def fetch_insights_sync(
+@router.post("/query", response_model=SuccessResponse[InsightsResponse])
+async def query_insights_realtime(
     request: InsightsSyncRequest,
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsResponse]:
     """
-    Synchronously fetch Facebook Ads Insights data.
+    Query Facebook Ads Insights data by merging cached (DB) and realtime (API) windows.
     Returns data immediately (may timeout for large date ranges).
 
     Args:
@@ -186,7 +186,7 @@ async def fetch_insights_sync(
 
     Example:
         ```
-        POST /insights/sync
+        POST /insights/query
         {
             "ad_account_id": "act_123",
             "since": "2025-01-01",
@@ -196,7 +196,7 @@ async def fetch_insights_sync(
         ```
     """
     try:
-        result = await InsightsService.fetch_insights_sync(
+        result = await InsightsService.query_insights_realtime(
             ad_account_id=request.ad_account_id,
             since=request.since,
             until=request.until,
@@ -241,8 +241,8 @@ async def fetch_insights_sync(
         )
 
 
-@router.post("/sync/from-last", response_model=SuccessResponse[InsightsResponse])
-async def fetch_insights_from_last_sync(
+@router.post("/query/from-last", response_model=SuccessResponse[InsightsResponse])
+async def query_insights_from_last_gap(
     request: InsightsFromLastRequest,
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsResponse]:
@@ -251,7 +251,7 @@ async def fetch_insights_from_last_sync(
     the account's last synced date (until + 1 day) up to the requested until date.
     """
     try:
-        result = await InsightsService.fetch_insights_from_last_sync(
+        result = await InsightsService.query_insights_from_last_gap(
             ad_account_id=request.ad_account_id,
             until=request.until,
             level=request.level,
@@ -295,11 +295,8 @@ async def fetch_insights_from_last_sync(
         )
 
 
-@router.get(
-    "/sync/status",
-    response_model=SuccessResponse[InsightsAccountSyncResponse],
-)
-async def list_account_sync_status(
+@router.get("/sync/runs", response_model=SuccessResponse[InsightsAccountSyncResponse])
+async def list_sync_runs(
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsAccountSyncResponse]:
     """
@@ -337,11 +334,8 @@ async def list_account_sync_status(
     )
 
 
-@router.post(
-    "/sync/manual",
-    response_model=SuccessResponse[InsightsSyncTriggerResponse],
-)
-async def trigger_insights_sync(
+@router.post("/sync/runs", response_model=SuccessResponse[InsightsSyncTriggerResponse])
+async def trigger_sync_run(
     request: InsightsSyncTriggerRequest,
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsSyncTriggerResponse]:

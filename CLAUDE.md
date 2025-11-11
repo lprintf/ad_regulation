@@ -333,19 +333,20 @@ All endpoints require the `X-User-Id` header for user authentication.
 - `GET /ad-accounts` - List all ad accounts
 - `GET /ad-accounts/{account_id}` - Get specific ad account details
 
-#### Insights Data (Synchronous)
-- `GET /insights/sync` - Fetch insights data immediately (combines database + real-time Facebook API)
-  - Query parameters:
+#### Insights Data (Realtime / Hybrid)
+- `POST /insights/query` - Fetch insights data immediately by merging MongoDB history with realtime Facebook API (last 3 days)
+  - JSON body parameters:
     - `ad_account_id` (required): Ad account ID
     - `since` (required): Start date (YYYY-MM-DD)
     - `until` (required): End date (YYYY-MM-DD)
     - `level` (optional): Aggregation level (ad/adset/campaign), default: "ad"
     - `time_increment` (optional): Time granularity (1=daily, null=aggregate)
     - `breakdowns` (optional): Breakdown dimensions (e.g., "country", "hourly_stats_aggregated_by_advertiser_time_zone")
+    - `fields` (optional): Additional FB fields (e.g., entity names)
   - Data source: MongoDB (historical data) + Facebook API (latest 3 days)
 
 #### Insights Data (Database Query)
-- `GET /insights/query` - Query insights data from MongoDB only (recommended for viewing historical data)
+- `GET /insights` - Query insights data from MongoDB only (recommended for viewing historical data)
   - Query parameters:
     - `ad_account_id` (required): Ad account ID (with or without act_ prefix)
     - `since` (required): Start date (YYYY-MM-DD)
@@ -364,13 +365,13 @@ All endpoints require the `X-User-Id` header for user authentication.
     - **Campaign level** (`level="campaign"`): Returns aggregated data by campaign_id with both `ad_id` and `campaign_id` populated (same value), `adset_id` as null
 
 #### Insights Data (Asynchronous)
-- `POST /insights/async` - Create async insights job
+- `POST /insights/jobs` - Create async insights job
   - Request body: JSON with `ad_account_id`, `since`, `until`, `level`, `time_increment`, `breakdowns`
   - Returns: `job_id` and initial status
-- `GET /insights/async/{job_id}` - Check job status
+- `GET /insights/jobs/{job_id}` - Check job status
   - Query parameters: `ad_account_id`
   - Returns: Job status and completion percentage
-- `GET /insights/async/{job_id}/result` - Get completed job results
+- `GET /insights/jobs/{job_id}/result` - Get completed job results
   - Query parameters: `ad_account_id`
   - Returns: Insights data (only when job is completed)
 
@@ -421,44 +422,67 @@ All endpoints require the `X-User-Id` header for user authentication.
 
 #### Example 1: Query Database for Historical Data (Ad Level)
 ```bash
-curl -X GET "http://localhost:8000/insights/query?ad_account_id=1244295750378353&since=2025-07-22&until=2025-08-31&level=ad&time_increment=1" \
+curl -X GET "http://localhost:8000/insights?ad_account_id=1244295750378353&since=2025-07-22&until=2025-08-31&level=ad&time_increment=1" \
   -H "X-User-Id: user123"
 ```
 
 #### Example 2: Query Database for AdSet-Level Aggregated Data
 ```bash
-curl -X GET "http://localhost:8000/insights/query?ad_account_id=1244295750378353&since=2025-07-22&until=2025-08-31&level=adset&time_increment=1" \
+curl -X GET "http://localhost:8000/insights?ad_account_id=1244295750378353&since=2025-07-22&until=2025-08-31&level=adset&time_increment=1" \
   -H "X-User-Id: user123"
 ```
 
 #### Example 3: Query Database for Campaign-Level Aggregated Data
 ```bash
-curl -X GET "http://localhost:8000/insights/query?ad_account_id=1244295750378353&since=2025-07-22&until=2025-08-31&level=campaign&time_increment=1" \
+curl -X GET "http://localhost:8000/insights?ad_account_id=1244295750378353&since=2025-07-22&until=2025-08-31&level=campaign&time_increment=1" \
   -H "X-User-Id: user123"
 ```
 
-#### Example 4: Fetch Daily Insights (Sync - combines DB + API)
+#### Example 4: Fetch Daily Insights (Realtime Hybrid)
 ```bash
-curl -X GET "http://localhost:8000/insights/sync?ad_account_id=act_123&since=2025-10-01&until=2025-10-20&time_increment=1" \
-  -H "X-User-Id: user123"
+curl -X POST "http://localhost:8000/insights/query" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "ad_account_id": "act_123",
+    "since": "2025-10-01",
+    "until": "2025-10-20",
+    "time_increment": 1,
+    "level": "ad"
+  }'
 ```
 
-#### Example 5: Fetch Hourly Insights by Advertiser Time Zone (Sync)
+#### Example 5: Fetch Hourly Insights by Advertiser Time Zone (Realtime Hybrid)
 ```bash
-curl -X GET "http://localhost:8000/insights/sync?ad_account_id=act_123&since=2025-10-20&until=2025-10-20&breakdowns=hourly_stats_aggregated_by_advertiser_time_zone" \
-  -H "X-User-Id: user123"
+curl -X POST "http://localhost:8000/insights/query" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "ad_account_id": "act_123",
+    "since": "2025-10-20",
+    "until": "2025-10-20",
+    "breakdowns": "hourly_stats_aggregated_by_advertiser_time_zone"
+  }'
 ```
 
-#### Example 6: Fetch Country-Level Insights (Sync)
+#### Example 6: Fetch Country-Level Insights (Realtime Hybrid)
 ```bash
-curl -X GET "http://localhost:8000/insights/sync?ad_account_id=act_123&since=2025-10-01&until=2025-10-20&time_increment=1&breakdowns=country" \
-  -H "X-User-Id: user123"
+curl -X POST "http://localhost:8000/insights/query" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "ad_account_id": "act_123",
+    "since": "2025-10-01",
+    "until": "2025-10-20",
+    "time_increment": 1,
+    "breakdowns": "country"
+  }'
 ```
 
 #### Example 7: Large Data Fetch (Async)
 ```bash
 # Step 1: Create async job
-curl -X POST "http://localhost:8000/insights/async" \
+curl -X POST "http://localhost:8000/insights/jobs" \
   -H "Content-Type: application/json" \
   -H "X-User-Id: user123" \
   -d '{
@@ -472,13 +496,13 @@ curl -X POST "http://localhost:8000/insights/async" \
 # Response: {"success": true, "data": {"job_id": "12345678", ...}}
 
 # Step 2: Check job status
-curl -X GET "http://localhost:8000/insights/async/12345678?ad_account_id=act_123" \
+curl -X GET "http://localhost:8000/insights/jobs/12345678?ad_account_id=act_123" \
   -H "X-User-Id: user123"
 
 # Response: {"success": true, "data": {"status": "Job Completed", "percent_complete": 100, ...}}
 
 # Step 3: Get results
-curl -X GET "http://localhost:8000/insights/async/12345678/result?ad_account_id=act_123" \
+curl -X GET "http://localhost:8000/insights/jobs/12345678/result?ad_account_id=act_123" \
   -H "X-User-Id: user123"
 ```
 

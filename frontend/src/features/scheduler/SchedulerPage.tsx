@@ -8,7 +8,7 @@ import {
   updateSchedulerTaskState
 } from '../../api/ruleEngine'
 import { formatDateTime, formatRelativeTime } from '../../lib/datetime'
-import type { SchedulerTask } from '../../types/rule-engine'
+import type { SchedulerTask, SchedulerNamespace } from '../../types/rule-engine'
 
 const statusClass: Record<string, string> = {
   running: 'badge badge--success',
@@ -32,15 +32,28 @@ const SchedulerPage = () => {
   })
 
   const updateStateMutation = useMutation({
-    mutationFn: ({ taskId, action }: { taskId: string; action: 'pause' | 'resume' }) =>
-      updateSchedulerTaskState(taskId, action),
+    mutationFn: ({
+      namespace,
+      taskId,
+      action
+    }: {
+      namespace: SchedulerNamespace
+      taskId: string
+      action: 'pause' | 'resume'
+    }) => updateSchedulerTaskState({ namespace, taskId, action }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scheduler-tasks'] })
     }
   })
 
   const runNowMutation = useMutation({
-    mutationFn: runSchedulerTaskNow,
+    mutationFn: ({
+      namespace,
+      taskId
+    }: {
+      namespace: SchedulerNamespace
+      taskId: string
+    }) => runSchedulerTaskNow({ namespace, taskId }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scheduler-tasks'] })
     }
@@ -49,9 +62,14 @@ const SchedulerPage = () => {
   const updateTaskMutation = useMutation<
     SchedulerTask,
     unknown,
-    { taskId: string; payload: { cron?: string; metadata?: Record<string, unknown> } }
+    {
+      namespace: SchedulerNamespace
+      taskId: string
+      payload: { cron?: string; metadata?: Record<string, unknown> }
+    }
   >({
-    mutationFn: ({ taskId, payload }) => updateSchedulerTask(taskId, payload),
+    mutationFn: ({ namespace, taskId, payload }) =>
+      updateSchedulerTask({ namespace, taskId, payload }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['scheduler-tasks'] })
       setEditingTask(null)
@@ -129,10 +147,11 @@ const SchedulerPage = () => {
 
     setFormError(null)
     updateTaskMutation.mutate({
+      namespace: editingTask.namespace,
       taskId: editingTask.id,
       payload: {
         cron: cronValue,
-      metadata: parsedMetadata
+        metadata: parsedMetadata
       }
     })
   }
@@ -208,6 +227,9 @@ const SchedulerPage = () => {
                     <tr key={task.id}>
                       <td>
                         <div style={{ fontWeight: 600 }}>{task.name}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                          命名空间：{task.namespace}
+                        </div>
                         {task.lastError && (
                           <div style={{ color: 'var(--color-danger)', fontSize: '0.8rem' }}>
                             {task.lastError}
@@ -255,31 +277,37 @@ const SchedulerPage = () => {
                             className="button button--ghost"
                             onClick={() => openEditForm(task)}
                             disabled={updateTaskMutation.isPending && editingTask?.id === task.id}
-                        >
-                          编辑
-                        </button>
-                        <button
-                          className="button button--secondary"
-                          onClick={() => runNowMutation.mutate(task.id)}
-                          disabled={runNowMutation.isPending}
-                        >
-                          立即执行
-                        </button>
-                        <button
-                          className="button button--ghost"
-                          onClick={() =>
-                            updateStateMutation.mutate({
-                              taskId: task.id,
-                              action: task.status === 'running' ? 'pause' : 'resume'
-                            })
-                          }
-                          disabled={updateStateMutation.isPending}
-                        >
-                          {task.status === 'running' ? '暂停' : '恢复'}
-                        </button>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                          {task.lastRunAt ? `最近：${formatRelativeTime(task.lastRunAt)}` : ''}
-                        </span>
+                          >
+                            编辑
+                          </button>
+                          <button
+                            className="button button--secondary"
+                            onClick={() =>
+                              runNowMutation.mutate({
+                                namespace: task.namespace,
+                                taskId: task.id
+                              })
+                            }
+                            disabled={runNowMutation.isPending}
+                          >
+                            立即执行
+                          </button>
+                          <button
+                            className="button button--ghost"
+                            onClick={() =>
+                              updateStateMutation.mutate({
+                                namespace: task.namespace,
+                                taskId: task.id,
+                                action: task.status === 'running' ? 'pause' : 'resume'
+                              })
+                            }
+                            disabled={updateStateMutation.isPending}
+                          >
+                            {task.status === 'running' ? '暂停' : '恢复'}
+                          </button>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                            {task.lastRunAt ? `最近：${formatRelativeTime(task.lastRunAt)}` : ''}
+                          </span>
                         </div>
                       </td>
                     </tr>

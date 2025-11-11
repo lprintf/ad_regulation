@@ -18,25 +18,8 @@ from api.models.rules import (
     RuleExecutionLogResponse,
     RuleExecutionRequest,
     RuleStatus,
-    SchedulerTaskResponse,
-    SchedulerTaskUpdateRequest,
 )
 from api.services.rule_engine_service import RuleEngineService
-from api.services.rule_scheduler import (
-    get_scheduler_tasks,
-    pause_scheduler_task,
-    resume_scheduler_task,
-    run_scheduler_task_now,
-    update_scheduler_task,
-)
-from api.services.insights_sync_scheduler import (
-    INSIGHTS_SCHEDULER_TASK_ID,
-    get_insights_scheduler_task,
-    pause_insights_scheduler_task,
-    resume_insights_scheduler_task,
-    run_insights_scheduler_task_now,
-    update_insights_scheduler_task,
-)
 
 router = APIRouter(prefix="/rules", tags=["Rules"])
 
@@ -197,96 +180,3 @@ async def list_rule_executions(
     except ValueError as exc:
         _handle_value_error(exc)
 
-
-@router.get(
-    "/scheduler/tasks",
-    response_model=SuccessResponse[list[SchedulerTaskResponse]],
-)
-async def list_scheduler_tasks():
-    """List APScheduler tasks registered for rule engine and insights sync."""
-    tasks = get_scheduler_tasks()
-    tasks.append(get_insights_scheduler_task())
-    return SuccessResponse(data=tasks, message="Scheduler tasks retrieved")
-
-
-@router.patch(
-    "/scheduler/tasks/{task_id}",
-    response_model=SuccessResponse[SchedulerTaskResponse],
-)
-async def update_scheduler(task_id: str, request: SchedulerTaskUpdateRequest):
-    """Update scheduler task cron expression or metadata."""
-    try:
-        if task_id == INSIGHTS_SCHEDULER_TASK_ID:
-            task = update_insights_scheduler_task(
-                cron_expression=request.cron,
-                metadata=request.metadata,
-            )
-        else:
-            task = update_scheduler_task(
-                task_id,
-                cron_expression=request.cron,
-                metadata=request.metadata,
-            )
-        return SuccessResponse(
-            data=task,
-            message="Scheduler task updated",
-        )
-    except ValueError as exc:
-        _handle_value_error(exc)
-
-
-@router.post(
-    "/scheduler/tasks/{task_id}/pause",
-    response_model=SuccessResponse[dict[str, str]],
-)
-async def pause_scheduler(task_id: str):
-    """Pause a scheduler task."""
-    try:
-        if task_id == INSIGHTS_SCHEDULER_TASK_ID:
-            pause_insights_scheduler_task()
-        else:
-            pause_scheduler_task(task_id)
-        return SuccessResponse(
-            data={"task_id": task_id, "status": "paused"},
-            message="Scheduler task paused",
-        )
-    except ValueError as exc:
-        _handle_value_error(exc)
-
-
-@router.post(
-    "/scheduler/tasks/{task_id}/resume",
-    response_model=SuccessResponse[dict[str, str]],
-)
-async def resume_scheduler(task_id: str):
-    """Resume a scheduler task."""
-    try:
-        if task_id == INSIGHTS_SCHEDULER_TASK_ID:
-            resume_insights_scheduler_task()
-        else:
-            resume_scheduler_task(task_id)
-        return SuccessResponse(
-            data={"task_id": task_id, "status": "running"},
-            message="Scheduler task resumed",
-        )
-    except ValueError as exc:
-        _handle_value_error(exc)
-
-
-@router.post(
-    "/scheduler/tasks/{task_id}/run",
-    response_model=SuccessResponse[dict[str, str]],
-)
-async def run_scheduler_now(task_id: str):
-    """Trigger a scheduler task immediately."""
-    try:
-        if task_id == INSIGHTS_SCHEDULER_TASK_ID:
-            await run_insights_scheduler_task_now()
-        else:
-            await run_scheduler_task_now(task_id)
-        return SuccessResponse(
-            data={"task_id": task_id, "status": "triggered"},
-            message="Scheduler task executed",
-        )
-    except ValueError as exc:
-        _handle_value_error(exc)

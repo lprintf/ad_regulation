@@ -12,7 +12,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.dependencies.database import close_db_connection
 from api.models.responses import ErrorDetail, ErrorResponse
-from api.routers import ad_accounts, ad_control, fb_auth, health, insights, predictions, rules
+from api.routers import (
+    ad_accounts,
+    ad_control,
+    fb_auth,
+    health,
+    insights,
+    predictions,
+    rules,
+    scheduler,
+)
 from api.services.rule_engine_service import RuleEngineService
 from api.services.rule_scheduler import start_rule_scheduler, stop_rule_scheduler
 from api.services.insights_sync_scheduler import (
@@ -114,6 +123,7 @@ app.include_router(insights.router)
 app.include_router(predictions.router)
 app.include_router(ad_control.router)
 app.include_router(rules.router)
+app.include_router(scheduler.router)
 app.include_router(fb_auth.router)
 
 

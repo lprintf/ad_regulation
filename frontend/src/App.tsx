@@ -20,7 +20,7 @@ const App = () => {
           <Route path="/rules/scheduler" element={<SchedulerPage />} />
           <Route path="/insights/data" element={<InsightsDataPage />} />
           <Route path="/integrations/facebook" element={<FacebookAuthPage />} />
-          <Route path="/insights/sync" element={<InsightsSyncPage />} />
+          <Route path="/insights/sync-runs" element={<InsightsSyncPage />} />
           <Route path="*" element={<Navigate to="/rules/definitions" replace />} />
         </Routes>
       </AppLayout>

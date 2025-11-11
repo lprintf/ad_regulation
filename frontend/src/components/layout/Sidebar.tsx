@@ -28,7 +28,7 @@ const navItems = [
   },
   {
     label: '洞察同步',
-    to: '/insights/sync',
+    to: '/insights/sync-runs',
     description: '历史数据同步状态与手动重试'
   },
   {

@@ -28,8 +28,8 @@ const mapAccountStatusFromApi = (item: any): InsightAccountSyncStatus => {
   }
 }
 
-export const fetchInsightsSyncStatus = async (): Promise<InsightAccountSyncStatus[]> => {
-  const { data } = await apiClient.get('/insights/sync/status')
+export const fetchInsightsSyncRuns = async (): Promise<InsightAccountSyncStatus[]> => {
+  const { data } = await apiClient.get('/insights/sync/runs')
   const payload = data?.data ?? data ?? {}
   const items: any[] = Array.isArray(payload?.items) ? payload.items : []
   return items.map(mapAccountStatusFromApi)
@@ -195,14 +195,14 @@ export const fetchInsightsData = async (params: InsightsDataQuery): Promise<Insi
   }
 
   if (params.source === 'realtime') {
-    const { data } = await apiClient.post('/insights/sync', buildRealtimePayload(params))
+    const { data } = await apiClient.post('/insights/query', buildRealtimePayload(params))
     return mapApiResponse(data, params.since, params.until)
   }
 
   // hybrid: fetch DB + realtime (gap) and merge
   const [dbResponse, realtimeResponse] = await Promise.all([
     apiClient.get('/insights', { params: buildDbParams(params) }),
-    apiClient.post('/insights/sync/from-last', buildFromLastPayload(params))
+    apiClient.post('/insights/query/from-last', buildFromLastPayload(params))
   ])
 
   const dbResult = mapApiResponse(dbResponse.data, params.since, params.until)
@@ -242,10 +242,10 @@ export interface InsightsSyncTriggerPayload {
   until: string
 }
 
-export const triggerInsightsSync = async (
+export const createInsightsSyncRun = async (
   payload: InsightsSyncTriggerPayload
 ): Promise<InsightSyncTriggerResult> => {
-  const { data } = await apiClient.post('/insights/sync/manual', payload)
+  const { data } = await apiClient.post('/insights/sync/runs', payload)
   const body = data?.data ?? data ?? {}
   const total =
     body?.total_accounts ??

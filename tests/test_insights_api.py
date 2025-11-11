@@ -72,9 +72,9 @@ async def test_list_ad_accounts():
     print("✅ List ad accounts passed")
 
 
-async def test_sync_insights_daily():
-    """Test synchronous daily insights fetching."""
-    print_test_header("Sync Insights - Daily Data")
+async def test_query_insights_daily():
+    """Test realtime daily insights fetching (hybrid)."""
+    print_test_header("Realtime Insights - Daily Data")
 
     headers = {"X-User-Id": USER_ID}
     payload = {
@@ -89,7 +89,7 @@ async def test_sync_insights_daily():
 
     async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
         response = await client.post(
-            f"{BASE_URL}/insights/sync", headers=headers, json=payload
+            f"{BASE_URL}/insights/query", headers=headers, json=payload
         )
         print_response(response)
 
@@ -99,12 +99,12 @@ async def test_sync_insights_daily():
         assert "insights" in data["data"]
         print(f"Total records: {data['data']['total_records']}")
 
-    print("✅ Sync daily insights passed")
+    print("✅ Realtime daily insights passed")
 
 
-async def test_sync_insights_aggregate():
-    """Test synchronous aggregate insights fetching."""
-    print_test_header("Sync Insights - Aggregated Data")
+async def test_query_insights_aggregate():
+    """Test realtime aggregate insights fetching."""
+    print_test_header("Realtime Insights - Aggregated Data")
 
     headers = {"X-User-Id": USER_ID}
     payload = {
@@ -119,7 +119,7 @@ async def test_sync_insights_aggregate():
 
     async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
         response = await client.post(
-            f"{BASE_URL}/insights/sync", headers=headers, json=payload
+            f"{BASE_URL}/insights/query", headers=headers, json=payload
         )
         print_response(response)
 
@@ -128,12 +128,12 @@ async def test_sync_insights_aggregate():
         assert data["success"] is True
         print(f"Total records: {data['data']['total_records']}")
 
-    print("✅ Sync aggregated insights passed")
+    print("✅ Realtime aggregated insights passed")
 
 
-async def test_sync_insights_with_breakdowns():
-    """Test synchronous insights with breakdown dimensions."""
-    print_test_header("Sync Insights - With Country Breakdown")
+async def test_query_insights_with_breakdowns():
+    """Test realtime insights with breakdown dimensions."""
+    print_test_header("Realtime Insights - With Country Breakdown")
 
     headers = {"X-User-Id": USER_ID}
     payload = {
@@ -149,14 +149,14 @@ async def test_sync_insights_with_breakdowns():
 
     async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
         response = await client.post(
-            f"{BASE_URL}/insights/sync", headers=headers, json=payload
+            f"{BASE_URL}/insights/query", headers=headers, json=payload
         )
         print_response(response)
 
         if response.status_code == 200:
             data = response.json()
             print(f"Total records: {data['data']['total_records']}")
-            print("✅ Sync insights with breakdowns passed")
+            print("✅ Realtime insights with breakdowns passed")
         else:
             print("⚠️  Note: Breakdown queries may not work for all accounts")
 
@@ -171,7 +171,7 @@ async def test_error_handling():
         # Test 1: Missing required parameter
         print("\nTest 1: Missing required parameter (ad_account_id)")
         response = await client.post(
-            f"{BASE_URL}/insights/sync",
+            f"{BASE_URL}/insights/query",
             headers=headers,
             json={"since": since, "until": until},
         )
@@ -181,7 +181,7 @@ async def test_error_handling():
         # Test 2: Invalid date format
         print("\nTest 2: Invalid date format")
         response = await client.post(
-            f"{BASE_URL}/insights/sync",
+            f"{BASE_URL}/insights/query",
             headers=headers,
             json={
                 "ad_account_id": AD_ACCOUNT_ID,
@@ -195,7 +195,7 @@ async def test_error_handling():
         # Test 3: Missing authentication header
         print("\nTest 3: Missing X-User-Id header")
         response = await client.post(
-            f"{BASE_URL}/insights/sync",
+            f"{BASE_URL}/insights/query",
             json={
                 "ad_account_id": AD_ACCOUNT_ID,
                 "since": since,
@@ -223,13 +223,13 @@ async def main():
         # Run synchronous tests
         await test_health_check()
         await test_list_ad_accounts()
-        await test_sync_insights_daily()
-        await test_sync_insights_aggregate()
-        await test_sync_insights_with_breakdowns()
+        await test_query_insights_daily()
+        await test_query_insights_aggregate()
+        await test_query_insights_with_breakdowns()
         await test_error_handling()
 
         print("\n" + "=" * 60)
-        print("✅ ALL SYNC TESTS PASSED!")
+        print("✅ ALL INSIGHTS QUERY TESTS PASSED!")
         print("=" * 60)
         print("\n💡 TIP: Run async tests separately with:")
         print("   python tests/test_async_insights.py")
