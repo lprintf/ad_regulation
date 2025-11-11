@@ -231,10 +231,12 @@ GET  /ad-accounts/{account_id}       # 获取账户详情
 ```http
 GET  /insights                       # 历史数据（数据库查询）
 POST /insights/query                 # 实时/混合查询
-POST /insights/query/from-last       # 基于最近同步时间补齐实时窗口
+GET/POST /insights/query/from-last   # 基于最近同步时间补齐实时窗口（GET 支持分钟级 cache_window_hint=dd:hh:mm）
 POST /insights/jobs                  # 创建异步任务
 GET  /insights/jobs/{job_id}         # 查询任务状态
 GET  /insights/jobs/{job_id}/result  # 获取任务结果
+
+- `cache_window_hint`：`dd:hh:mm`（UTC）格式的分钟级缓存提示，可保持 GET 请求在同一分钟内幂等，便于上游缓存。
 ```
 
 **特点**:

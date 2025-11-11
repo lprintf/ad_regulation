@@ -6,7 +6,7 @@ Provides API for fetching Facebook Ads Insights data (sync and async).
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from api.dependencies.auth import get_current_user
 from api.models.insights import (
@@ -241,15 +241,13 @@ async def query_insights_realtime(
         )
 
 
-@router.post("/query/from-last", response_model=SuccessResponse[InsightsResponse])
-async def query_insights_from_last_gap(
+def _apply_cache_control(response: Response, seconds: int = 60) -> None:
+    response.headers["Cache-Control"] = f"public, max-age={seconds}"
+
+
+async def _execute_query_from_last(
     request: InsightsFromLastRequest,
-    user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsResponse]:
-    """
-    Fetch insights by automatically filling the realtime window using
-    the account's last synced date (until + 1 day) up to the requested until date.
-    """
     try:
         result = await InsightsService.query_insights_from_last_gap(
             ad_account_id=request.ad_account_id,
@@ -293,6 +291,31 @@ async def query_insights_from_last_gap(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch insights from last sync: {str(e)}",
         )
+
+
+@router.get("/query/from-last", response_model=SuccessResponse[InsightsResponse])
+async def query_insights_from_last_gap_get(
+    request: Annotated[InsightsFromLastRequest, Depends()],
+    response: Response,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[InsightsResponse]:
+    """
+    Fetch insights by automatically filling the realtime window using
+    the account's last synced date (until + 1 day) up to the requested until date.
+    """
+    _apply_cache_control(response)
+    return await _execute_query_from_last(request)
+
+
+@router.post("/query/from-last", response_model=SuccessResponse[InsightsResponse])
+async def query_insights_from_last_gap_post(
+    request: InsightsFromLastRequest,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[InsightsResponse]:
+    """
+    POST-compatible variant for legacy callers. Prefer GET /insights/query/from-last.
+    """
+    return await _execute_query_from_last(request)
 
 
 @router.get("/sync/runs", response_model=SuccessResponse[InsightsAccountSyncResponse])

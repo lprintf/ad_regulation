@@ -135,6 +135,16 @@ const buildCommonParams = (params: InsightsDataQuery) => ({
   level: params.level ?? 'ad'
 })
 
+const padTwoDigits = (value: number) => value.toString().padStart(2, '0')
+
+// Produce a deterministic dd:hh:mm bucket (UTC) so gateway caches can key per minute.
+const buildCacheWindowHint = () => {
+  const now = new Date()
+  return `${padTwoDigits(now.getUTCDate())}:${padTwoDigits(now.getUTCHours())}:${padTwoDigits(
+    now.getUTCMinutes()
+  )}`
+}
+
 const buildDbParams = (params: InsightsDataQuery) => {
   const queryParams: Record<string, unknown> = {
     ad_account_id: params.accountId,
@@ -170,10 +180,11 @@ const buildRealtimePayload = (params: InsightsDataQuery) => {
   return payload
 }
 
-const buildFromLastPayload = (params: InsightsDataQuery) => {
+const buildFromLastParams = (params: InsightsDataQuery) => {
   const payload: Record<string, unknown> = {
     ad_account_id: params.accountId,
     until: params.until,
+    cache_window_hint: buildCacheWindowHint(),
     ...buildCommonParams(params)
   }
   if (params.timeIncrement !== undefined) {
@@ -183,7 +194,7 @@ const buildFromLastPayload = (params: InsightsDataQuery) => {
     payload.breakdowns = params.breakdowns
   }
   if (params.fields?.length) {
-    payload.fields = params.fields
+    payload.fields = params.fields.join(',')
   }
   return payload
 }
@@ -202,7 +213,7 @@ export const fetchInsightsData = async (params: InsightsDataQuery): Promise<Insi
   // hybrid: fetch DB + realtime (gap) and merge
   const [dbResponse, realtimeResponse] = await Promise.all([
     apiClient.get('/insights', { params: buildDbParams(params) }),
-    apiClient.post('/insights/query/from-last', buildFromLastPayload(params))
+    apiClient.get('/insights/query/from-last', { params: buildFromLastParams(params) })
   ])
 
   const dbResult = mapApiResponse(dbResponse.data, params.since, params.until)

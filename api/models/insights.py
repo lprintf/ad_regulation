@@ -2,10 +2,11 @@
 Request and response models for Insights endpoints.
 """
 
+import re
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AsyncJobStatus(str, Enum):
@@ -143,6 +144,36 @@ class InsightsFromLastRequest(BaseModel):
         default=None,
         description="Additional fields to request from Facebook (e.g., ['ad_name','adset_name'])",
     )
+    cache_window_hint: str | None = Field(
+        default=None,
+        description="Minute-level cache hint in dd:hh:mm format (e.g., '12:14:30').",
+        examples=["12:14:30"],
+    )
+
+    @field_validator("fields", mode="before")
+    @classmethod
+    def _normalize_fields(cls, value: Any) -> list[str] | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",")]
+            normalized = [item for item in items if item]
+            return normalized or None
+        raise TypeError("fields must be a list of strings or a comma-separated string")
+
+    @field_validator("cache_window_hint")
+    @classmethod
+    def _validate_cache_hint(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        pattern = r"\d{2}:\d{2}:\d{2}"
+        if re.fullmatch(pattern, value):
+            return value
+        raise ValueError(
+            "cache_window_hint must follow dd:hh:mm format, for example '12:14:30'."
+        )
 
 
 class InsightsResponse(BaseModel):
