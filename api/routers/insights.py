@@ -13,6 +13,7 @@ from api.models.insights import (
     AsyncJobCreateResponse,
     AsyncJobStatus,
     AsyncJobStatusResponse,
+    EntityNamesSyncResult,
     InsightRecord,
     InsightsRequest,
     InsightsResponse,
@@ -210,6 +211,13 @@ async def fetch_insights_sync(
             examples=["country", "hourly_stats_aggregated_by_advertiser_time_zone"],
         ),
     ] = None,
+    fields: Annotated[
+        str | None,
+        Query(
+            description="Comma-separated additional fields to request from Facebook (e.g., 'ad_name,adset_name,campaign_name')",
+            examples=["ad_name,adset_name,campaign_name"],
+        ),
+    ] = None,
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsResponse]:
     """
@@ -234,6 +242,12 @@ async def fetch_insights_sync(
         ```
     """
     try:
+        field_list = (
+            [field.strip() for field in fields.split(",") if field.strip()]
+            if fields
+            else None
+        )
+
         result = await InsightsService.fetch_insights_sync(
             ad_account_id=ad_account_id,
             since=since,
@@ -241,6 +255,7 @@ async def fetch_insights_sync(
             level=level,
             time_increment=time_increment,
             breakdowns=breakdowns,
+            fields=field_list,
         )
 
         insights_data = InsightsResponse(
@@ -275,6 +290,108 @@ async def fetch_insights_sync(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch insights: {str(e)}",
+        )
+
+
+@router.get("/sync/from-last", response_model=SuccessResponse[InsightsResponse])
+async def fetch_insights_from_last_sync(
+    ad_account_id: Annotated[
+        str,
+        Query(
+            description="Ad account ID (with or without act_ prefix)",
+            examples=["act_123456789"],
+        ),
+    ],
+    until: Annotated[
+        str,
+        Query(
+            description="End date in YYYY-MM-DD format",
+            examples=["2025-01-31"],
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+        ),
+    ],
+    level: Annotated[
+        str,
+        Query(
+            description="Aggregation level: ad, adset, or campaign",
+            examples=["ad"],
+        ),
+    ] = "ad",
+    time_increment: Annotated[
+        int | None,
+        Query(
+            description="Time increment: 1=daily, null=aggregate all",
+            examples=[1, None],
+        ),
+    ] = None,
+    breakdowns: Annotated[
+        str | None,
+        Query(
+            description="Comma-separated breakdown dimensions (e.g., 'country', 'hourly_stats_aggregated_by_advertiser_time_zone')",
+            examples=["country", "hourly_stats_aggregated_by_advertiser_time_zone"],
+        ),
+    ] = None,
+    fields: Annotated[
+        str | None,
+        Query(
+            description="Comma-separated additional fields to request from Facebook (e.g., 'ad_name,adset_name,campaign_name')",
+            examples=["ad_name,adset_name,campaign_name"],
+        ),
+    ] = None,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[InsightsResponse]:
+    """
+    Fetch insights by automatically filling the realtime window using
+    the account's last synced date (until + 1 day) up to the requested until date.
+    """
+    try:
+        field_list = (
+            [field.strip() for field in fields.split(",") if field.strip()]
+            if fields
+            else None
+        )
+
+        result = await InsightsService.fetch_insights_from_last_sync(
+            ad_account_id=ad_account_id,
+            until=until,
+            level=level,
+            time_increment=time_increment,
+            breakdowns=breakdowns,
+            fields=field_list,
+        )
+
+        insights_data = InsightsResponse(
+            insights=[
+                InsightRecord(
+                    ad_id=insight["ad_id"],
+                    adset_id=insight.get("adset_id"),
+                    campaign_id=insight.get("campaign_id"),
+                    ad_name=insight.get("ad_name"),
+                    adset_name=insight.get("adset_name"),
+                    campaign_name=insight.get("campaign_name"),
+                    date=insight["date"],
+                    metrics=insight["metrics"],
+                )
+                for insight in result["insights"]
+            ],
+            total_records=result["total_records"],
+            date_range=result["date_range"],
+        )
+
+        return SuccessResponse(
+            data=insights_data,
+            message=f"Successfully fetched {result['total_records']} insight records",
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch insights from last sync: {str(e)}",
         )
 
 
@@ -614,7 +731,10 @@ async def get_job_result(
 # ===== Entity Names Sync Endpoint =====
 
 
-@router.post("/sync-entity-names")
+@router.post(
+    "/sync-entity-names",
+    response_model=SuccessResponse[EntityNamesSyncResult],
+)
 async def sync_entity_names(
     ad_account_id: Annotated[
         str,
@@ -638,7 +758,7 @@ async def sync_entity_names(
         ),
     ],
     _current_user: str = Depends(get_current_user),
-) -> SuccessResponse:
+) -> SuccessResponse[EntityNamesSyncResult]:
     """
     Sync entity names for the specified entity IDs on demand.
     
@@ -667,7 +787,7 @@ async def sync_entity_names(
         )
 
         return SuccessResponse(
-            data=result,
+            data=EntityNamesSyncResult(**result),
             message=f"Successfully synced {result['synced']} entity names",
         )
 

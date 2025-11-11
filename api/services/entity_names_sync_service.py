@@ -173,7 +173,14 @@ class EntityNamesSyncService:
             同步结果统计：{"synced": count, "failed": count, "total": count, "rate_limited": count}
         """
         if not entity_ids:
-            return {"synced": 0, "failed": 0, "total": 0, "rate_limited": 0}
+            return {
+                "synced": 0,
+                "failed": 0,
+                "total": 0,
+                "rate_limited": 0,
+                "entities": [],
+                "failed_entities": [],
+            }
 
         account_id_with_prefix = (
             account_id if account_id.startswith("act_") else f"act_{account_id}"
@@ -184,6 +191,8 @@ class EntityNamesSyncService:
         failed = 0
         rate_limited = 0
         operations = []
+        synced_entities: List[Dict[str, Any]] = []
+        failed_entities: List[str] = []
 
         print(f"Starting sync for {len(entity_ids)} {entity_type} entities in account {account_id_with_prefix}")
 
@@ -199,6 +208,7 @@ class EntityNamesSyncService:
 
             if entity_data is None:
                 failed += 1
+                failed_entities.append(entity_id)
                 # 简单检测：如果连续失败可能是速率限制
                 if failed > len(entity_ids) * 0.3:  # 超过30%失败率
                     rate_limited += 1
@@ -231,6 +241,16 @@ class EntityNamesSyncService:
             )
 
             synced += 1
+            synced_entities.append(
+                {
+                    "entity_id": entity_id,
+                    "entity_name": entity_data["entity_name"],
+                    "configured_status": entity_data["configured_status"],
+                    "effective_status": entity_data["effective_status"],
+                    "entity_type": entity_type,
+                    "account_id": account_id_without_prefix,
+                }
+            )
 
             # 定期批量写入以避免内存占用过大
             if len(operations) >= 50:
@@ -250,6 +270,8 @@ class EntityNamesSyncService:
             "failed": failed,
             "total": len(entity_ids),
             "rate_limited": rate_limited,
+            "entities": synced_entities,
+            "failed_entities": failed_entities,
         }
 
         print(f"Sync completed: {result}")

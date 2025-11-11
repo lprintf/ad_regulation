@@ -95,7 +95,8 @@ async def get_insight(
     return insight
 
 
-def insight_to_df(insight: list) -> pd.DataFrame:
+def insight_to_df(insight: list, extra_fields: list[str] | None = None) -> pd.DataFrame:
+    extra_fields = extra_fields or []
     df = pd.DataFrame(
         (
             {
@@ -103,6 +104,7 @@ def insight_to_df(insight: list) -> pd.DataFrame:
                 # "account_id": _["account_id"],
                 "date_start": _["date_start"],
                 **get_atomic_metric(_),
+                **{field: _.get(field) for field in extra_fields},
             }
             for _ in insight
         )

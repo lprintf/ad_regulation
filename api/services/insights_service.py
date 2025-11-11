@@ -3,15 +3,23 @@ Service layer for Insights data operations.
 Encapsulates business logic for fetching and processing Facebook Ads Insights.
 """
 
+import math
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, Iterable, Tuple
+
+from pymongo import UpdateOne
 
 from facebook_business.adobjects.adreportrun import AdReportRun
 from beanie.operators import In
 
 from baseline.get_data import insight_to_df
 from api.services.insights_sync_service import REALTIME_LOOKBACK_DAYS
-from utils.db import InsightsDailyDocument, AdEntityNamesDocument
+from utils.db import (
+    InsightsDailyDocument,
+    AdEntityNamesDocument,
+    InsightsSyncStateDocument,
+    get_document_collection
+)
 from utils.fb_api_flyweight_factory import get_ad_object, get_api
 from utils.insight_tool import ATOMIC_FIELDS, get_insight
 
@@ -62,6 +70,7 @@ class InsightsService:
         level: str = "ad",
         time_increment: int | None = None,
         breakdowns: str | None = None,
+        fields: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Synchronously fetch insights data from Facebook API.
@@ -73,6 +82,21 @@ class InsightsService:
             level: Aggregation level (ad, adset, or campaign)
             time_increment: Time increment (1=daily, None=aggregate)
             breakdowns: Comma-separated breakdown dimensions
+
+        Returns:
+            Dictionary containing insights data with metrics and metadata
+
+        Raises:
+            ValueError: If parameters are invalid
+            Exception: If Facebook API call fails
+        Args:
+            ad_account_id: Ad account ID (with or without act_ prefix)
+            since: Start date in YYYY-MM-DD format
+            until: End date in YYYY-MM-DD format
+            level: Aggregation level (ad, adset, or campaign)
+            time_increment: Time increment (1=daily, None=aggregate)
+            breakdowns: Comma-separated breakdown dimensions
+            fields: Additional fields requested from Facebook API (e.g., entity names)
 
         Returns:
             Dictionary containing insights data with metrics and metadata
@@ -132,15 +156,33 @@ class InsightsService:
 
                 realtime_since = historical_until + timedelta(days=1)
 
+        requested_fields = fields or []
+        base_fields = ["ad_id", *ATOMIC_FIELDS]
+        api_fields: list[str] = list(dict.fromkeys(base_fields + requested_fields))
+        non_metric_fields = {
+            "adset_id",
+            "campaign_id",
+            "ad_name",
+            "adset_name",
+            "campaign_name",
+        }
+        extra_fields_for_df = [
+            field for field in requested_fields if field in non_metric_fields
+        ]
+
+        requested_name_fields = {"ad_name", "adset_name", "campaign_name"}
+        should_persist_realtime_names = any(
+            field in requested_name_fields for field in requested_fields
+        )
+
         api_records: list[dict[str, Any]] = []
         if realtime_since <= until_date:
             ad_object = await get_ad_object(account_id, account_id)
-            fields = ["ad_id", *ATOMIC_FIELDS]
 
             try:
                 insights = get_insight(
                     adobject=ad_object,
-                    fields=fields,
+                    fields=api_fields,
                     level=level,
                     since=realtime_since.strftime("%Y-%m-%d"),
                     until=until_date.strftime("%Y-%m-%d"),
@@ -149,8 +191,13 @@ class InsightsService:
                     is_async=False,
                 )
 
-                df = insight_to_df(insights)
+                df = insight_to_df(insights, extra_fields=extra_fields_for_df)
                 api_records = InsightsService._df_to_insights_list(df)
+                if should_persist_realtime_names and api_records:
+                    await InsightsService._persist_realtime_entity_names(
+                        account_id_without_prefix,
+                        api_records,
+                    )
             except Exception as exc:
                 if historical_records:
                     print(
@@ -168,11 +215,72 @@ class InsightsService:
             key=lambda item: (item["date"], item["ad_id"]),
         )
 
+        insights_list = await InsightsService._attach_entity_names(
+            insights_list, level, account_id_without_prefix
+        )
+
         return {
             "insights": insights_list,
             "total_records": len(insights_list),
             "date_range": {"since": since, "until": until},
         }
+
+    @staticmethod
+    async def fetch_insights_from_last_sync(
+        ad_account_id: str,
+        until: str,
+        level: str = "ad",
+        time_increment: int | None = None,
+        breakdowns: str | None = None,
+        fields: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Fetch insights by automatically setting the realtime window to
+        (last_synced_until + 1 day) → requested until.
+        """
+        account_id = InsightsService._normalize_account_id(ad_account_id)
+        account_id_without_prefix = (
+            account_id.replace("act_", "") if account_id.startswith("act_") else account_id
+        )
+
+        until_date = InsightsService._parse_date(until, "until date")
+        state = await InsightsSyncStateDocument.find_one(
+            InsightsSyncStateDocument.account_id == account_id_without_prefix
+        )
+
+        last_synced_date: date | None = None
+        if state:
+            last_synced_source = (
+                state.last_synced_date
+                or state.range_until
+                or state.obs_until
+            )
+            last_synced_date = InsightsService._normalize_state_date(last_synced_source)
+
+        if last_synced_date:
+            realtime_since_date = last_synced_date + timedelta(days=1)
+            if realtime_since_date > until_date:
+                raise ValueError(
+                    f"请求的结束日期 {until} 不晚于已同步日期 {last_synced_date.isoformat()}，无需补齐。"
+                )
+        else:
+            fallback_window = max(REALTIME_LOOKBACK_DAYS, 1)
+            realtime_since_date = until_date - timedelta(days=fallback_window)
+            if realtime_since_date < until_date - timedelta(days=90):
+                realtime_since_date = until_date - timedelta(days=90)
+            if realtime_since_date > until_date:
+                realtime_since_date = until_date
+
+        since_str = realtime_since_date.strftime("%Y-%m-%d")
+        return await InsightsService.fetch_insights_sync(
+            ad_account_id=account_id,
+            since=since_str,
+            until=until,
+            level=level,
+            time_increment=time_increment,
+            breakdowns=breakdowns,
+            fields=fields,
+        )
 
     @staticmethod
     async def create_async_job(
@@ -391,9 +499,29 @@ class InsightsService:
     def _df_to_insights_list(df) -> list[dict[str, Any]]:
         """Convert DataFrame to list of insight dictionaries."""
         insights_list = []
+        columns = set(df.columns)
+        has_adset_id = "adset_id" in columns
+        has_campaign_id = "campaign_id" in columns
+        has_ad_name = "ad_name" in columns
+        has_adset_name = "adset_name" in columns
+        has_campaign_name = "campaign_name" in columns
+
+        def _normalize_optional(value: Any) -> str | None:
+            if value is None:
+                return None
+            if isinstance(value, float) and math.isnan(value):
+                return None
+            text = str(value).strip()
+            return text or None
+
         for _, row in df.iterrows():
             insight_record = {
                 "ad_id": str(row["ad_id"]),
+                "adset_id": None,
+                "campaign_id": None,
+                "ad_name": None,
+                "adset_name": None,
+                "campaign_name": None,
                 "date": str(row["date_start"]),
                 "metrics": {
                     "spend": float(row["spend"]),
@@ -417,8 +545,80 @@ class InsightsService:
                     ),
                 },
             }
+
+            if has_adset_id:
+                insight_record["adset_id"] = _normalize_optional(row["adset_id"])
+            if has_campaign_id:
+                insight_record["campaign_id"] = _normalize_optional(row["campaign_id"])
+            if has_ad_name:
+                insight_record["ad_name"] = _normalize_optional(row["ad_name"])
+            if has_adset_name:
+                insight_record["adset_name"] = _normalize_optional(row["adset_name"])
+            if has_campaign_name:
+                insight_record["campaign_name"] = _normalize_optional(
+                    row["campaign_name"]
+                )
+
             insights_list.append(insight_record)
         return insights_list
+
+    @staticmethod
+    async def _persist_realtime_entity_names(
+        account_id: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        """
+        Upsert realtime entity names into AdEntityNamesDocument so future queries can reuse them.
+
+        Args:
+            account_id: Account ID without act_ prefix
+            records: Insight records containing optional entity names
+        """
+        if not records:
+            return
+
+        collection = get_document_collection(AdEntityNamesDocument)
+        operations: list[UpdateOne] = []
+        now = datetime.utcnow()
+
+        for record in records:
+            entity_candidates = [
+                ("ad", record.get("ad_id"), record.get("ad_name")),
+                ("adset", record.get("adset_id"), record.get("adset_name")),
+                ("campaign", record.get("campaign_id"), record.get("campaign_name")),
+            ]
+
+            for entity_type, entity_id, entity_name in entity_candidates:
+                if not entity_id or not entity_name:
+                    continue
+
+                normalized_name = str(entity_name).strip()
+                if not normalized_name:
+                    continue
+
+                operations.append(
+                    UpdateOne(
+                        {
+                            "account_id": account_id,
+                            "entity_type": entity_type,
+                            "entity_id": entity_id,
+                        },
+                        {
+                            "$set": {
+                                "account_id": account_id,
+                                "entity_type": entity_type,
+                                "entity_id": entity_id,
+                                "entity_name": normalized_name,
+                                "updated_at": now,
+                            },
+                            "$setOnInsert": {"fetched_at": now},
+                        },
+                        upsert=True,
+                    )
+                )
+
+        if operations:
+            await collection.bulk_write(operations, ordered=False)
 
     @staticmethod
     def _parse_date(date_str: str, field_name: str) -> date:
@@ -441,6 +641,22 @@ class InsightsService:
             raise ValueError(
                 f"Invalid {field_name}: '{date_str}'. Must be a valid date in YYYY-MM-DD format. Error: {e}"
             )
+
+    @staticmethod
+    def _normalize_state_date(value: datetime | date | str | None) -> date | None:
+        """Normalize various date inputs from sync state into a date object."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        if isinstance(value, str):
+            try:
+                return datetime.strptime(value[:10], "%Y-%m-%d").date()
+            except ValueError:
+                return None
+        return None
 
     @staticmethod
     def _document_to_insight(doc: InsightsDailyDocument) -> dict[str, Any]:
@@ -540,32 +756,27 @@ class InsightsService:
             for doc in campaign_name_docs:
                 entity_names_map[("campaign", doc.entity_id)] = doc.entity_name
 
-        # Attach names to insights
-        for idx, insight in enumerate(insights_list):
-            if level == "ad" and insight.get("ad_id"):
+        # Attach names to insights (without overwriting existing values)
+        for insight in insights_list:
+            if level == "ad" and insight.get("ad_id") and not insight.get("ad_name"):
                 ad_id = insight["ad_id"]
                 ad_name = entity_names_map.get(("ad", ad_id), None)
-                insight["ad_name"] = ad_name
-                if not ad_name:
-                    insight["adset_name"] = None
-                    insight["campaign_name"] = None
-            elif level == "adset" and insight.get("adset_id"):
-                insight["ad_name"] = None
-                insight["adset_name"] = entity_names_map.get(
-                    ("adset", insight["adset_id"]), None
-                )
-                insight["campaign_name"] = None
-            elif level == "campaign" and insight.get("campaign_id"):
-                insight["ad_name"] = None
-                insight["adset_name"] = None
-                insight["campaign_name"] = entity_names_map.get(
-                    ("campaign", insight["campaign_id"]), None
-                )
-            else:
-                # Fallback: set all names to None
-                insight["ad_name"] = None
-                insight["adset_name"] = None
-                insight["campaign_name"] = None
+                if ad_name:
+                    insight["ad_name"] = ad_name
+            elif level == "adset" and insight.get("adset_id") and not insight.get("adset_name"):
+                adset_id = insight["adset_id"]
+                adset_name = entity_names_map.get(("adset", adset_id), None)
+                if adset_name:
+                    insight["adset_name"] = adset_name
+            elif (
+                level == "campaign"
+                and insight.get("campaign_id")
+                and not insight.get("campaign_name")
+            ):
+                campaign_id = insight["campaign_id"]
+                campaign_name = entity_names_map.get(("campaign", campaign_id), None)
+                if campaign_name:
+                    insight["campaign_name"] = campaign_name
 
         return insights_list
 

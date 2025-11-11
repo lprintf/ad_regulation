@@ -96,6 +96,8 @@ const mapInsightRecordFromApi = (item: any): InsightRecord => {
   }
 }
 
+export type InsightsDataSource = 'database' | 'realtime' | 'hybrid'
+
 export interface InsightsDataQuery {
   accountId: string
   since: string
@@ -103,43 +105,133 @@ export interface InsightsDataQuery {
   level?: 'ad' | 'adset' | 'campaign'
   timeIncrement?: number | null
   breakdowns?: string
+  source: InsightsDataSource
+  fields?: string[]
 }
 
-export const fetchInsightsData = async (params: InsightsDataQuery): Promise<InsightsDataResponse> => {
-  const queryParams: Record<string, unknown> = {
-    ad_account_id: params.accountId,
-    since: params.since,
-    until: params.until,
-    level: params.level ?? 'ad'
-  }
-
-  if (params.timeIncrement !== undefined) {
-    queryParams.time_increment = params.timeIncrement
-  }
-
-  if (params.breakdowns) {
-    queryParams.breakdowns = params.breakdowns
-  }
-
-  // Use /insights/query to fetch from database only (no Facebook API calls)
-  const { data } = await apiClient.get('/insights/query', {
-    params: queryParams
-  })
-
-  const payload = data?.data ?? data ?? {}
+const mapApiResponse = (
+  raw: any,
+  fallbackSince: string,
+  fallbackUntil: string
+): InsightsDataResponse => {
+  const payload = raw?.data ?? raw ?? {}
   const insights = Array.isArray(payload?.insights) ? payload.insights.map(mapInsightRecordFromApi) : []
   const totalRecords = Number(payload?.total_records ?? payload?.totalRecords ?? insights.length)
   const dateRange = payload?.date_range ?? payload?.dateRange ?? {
-    since: params.since,
-    until: params.until
+    since: fallbackSince,
+    until: fallbackUntil
   }
-
   return {
     insights,
     totalRecords,
     dateRange: {
-      since: dateRange?.since ?? params.since,
-      until: dateRange?.until ?? params.until
+      since: dateRange?.since ?? fallbackSince,
+      until: dateRange?.until ?? fallbackUntil
+    }
+  }
+}
+
+const buildCommonParams = (params: InsightsDataQuery) => ({
+  level: params.level ?? 'ad'
+})
+
+const buildDbParams = (params: InsightsDataQuery) => {
+  const queryParams: Record<string, unknown> = {
+    ad_account_id: params.accountId,
+    since: params.since,
+    until: params.until,
+    ...buildCommonParams(params)
+  }
+  if (params.timeIncrement !== undefined) {
+    queryParams.time_increment = params.timeIncrement
+  }
+  if (params.breakdowns) {
+    queryParams.breakdowns = params.breakdowns
+  }
+  return queryParams
+}
+
+const buildRealtimeParams = (params: InsightsDataQuery) => {
+  const queryParams: Record<string, unknown> = {
+    ad_account_id: params.accountId,
+    since: params.since,
+    until: params.until,
+    ...buildCommonParams(params)
+  }
+  if (params.timeIncrement !== undefined) {
+    queryParams.time_increment = params.timeIncrement
+  }
+  if (params.breakdowns) {
+    queryParams.breakdowns = params.breakdowns
+  }
+  if (params.fields?.length) {
+    queryParams.fields = params.fields.join(',')
+  }
+  return queryParams
+}
+
+const buildHybridRealtimeParams = (params: InsightsDataQuery) => {
+  const queryParams: Record<string, unknown> = {
+    ad_account_id: params.accountId,
+    until: params.until,
+    ...buildCommonParams(params)
+  }
+  if (params.timeIncrement !== undefined) {
+    queryParams.time_increment = params.timeIncrement
+  }
+  if (params.breakdowns) {
+    queryParams.breakdowns = params.breakdowns
+  }
+  if (params.fields?.length) {
+    queryParams.fields = params.fields.join(',')
+  }
+  return queryParams
+}
+
+export const fetchInsightsData = async (params: InsightsDataQuery): Promise<InsightsDataResponse> => {
+  if (params.source === 'database') {
+    const { data } = await apiClient.get('/insights/query', { params: buildDbParams(params) })
+    return mapApiResponse(data, params.since, params.until)
+  }
+
+  if (params.source === 'realtime') {
+    const { data } = await apiClient.get('/insights/sync', { params: buildRealtimeParams(params) })
+    return mapApiResponse(data, params.since, params.until)
+  }
+
+  // hybrid: fetch DB + realtime (gap) and merge
+  const [dbResponse, realtimeResponse] = await Promise.all([
+    apiClient.get('/insights/query', { params: buildDbParams(params) }),
+    apiClient.get('/insights/sync/from-last', { params: buildHybridRealtimeParams(params) })
+  ])
+
+  const dbResult = mapApiResponse(dbResponse.data, params.since, params.until)
+  const realtimeResult = mapApiResponse(realtimeResponse.data, params.since, params.until)
+
+  const recordMap = new Map<string, InsightRecord>()
+  const makeKey = (record: InsightRecord) => `${record.date}-${record.adId}`
+
+  for (const record of dbResult.insights) {
+    recordMap.set(makeKey(record), record)
+  }
+  for (const record of realtimeResult.insights) {
+    recordMap.set(makeKey(record), record)
+  }
+
+  const mergedInsights = Array.from(recordMap.values()).sort((a, b) => {
+    const dateCompare = a.date.localeCompare(b.date)
+    if (dateCompare !== 0) {
+      return dateCompare
+    }
+    return a.adId.localeCompare(b.adId)
+  })
+
+  return {
+    insights: mergedInsights,
+    totalRecords: mergedInsights.length,
+    dateRange: {
+      since: params.since,
+      until: params.until
     }
   }
 }
@@ -193,9 +285,27 @@ export interface SyncEntityNamesPayload {
   entityType: 'ad' | 'adset' | 'campaign'
 }
 
+export interface SyncedEntityName {
+  entityId: string
+  entityName: string | null
+  configuredStatus: string | null
+  effectiveStatus: string | null
+  entityType: 'ad' | 'adset' | 'campaign'
+  accountId: string | null
+}
+
+export interface SyncEntityNamesResult {
+  synced: number
+  failed: number
+  total: number
+  rateLimited: number
+  entities: SyncedEntityName[]
+  failedEntities: string[]
+}
+
 export const syncEntityNames = async (
   payload: SyncEntityNamesPayload
-): Promise<{ synced: number; failed: number; total: number; rate_limited: number }> => {
+): Promise<SyncEntityNamesResult> => {
   const params = new URLSearchParams({
     ad_account_id: payload.adAccountId,
     entity_type: payload.entityType
@@ -209,10 +319,30 @@ export const syncEntityNames = async (
   const { data } = await apiClient.post(`/insights/sync-entity-names?${params.toString()}`)
   const result = data?.data ?? data ?? {}
 
+  const entitiesSource = Array.isArray(result.entities) ? result.entities : []
+  const entities: SyncedEntityName[] = entitiesSource.map((item: any) => {
+    const rawAccountId =
+      item?.account_id ?? item?.accountId ?? payload.adAccountId ?? null
+
+    return {
+      entityId: item?.entity_id ?? item?.entityId ?? '',
+      entityName: item?.entity_name ?? item?.entityName ?? null,
+      configuredStatus: item?.configured_status ?? item?.configuredStatus ?? null,
+      effectiveStatus: item?.effective_status ?? item?.effectiveStatus ?? null,
+      entityType: (item?.entity_type ?? item?.entityType ?? payload.entityType) as SyncedEntityName['entityType'],
+      accountId: rawAccountId ? String(rawAccountId).replace(/^act_/, '') : null
+    }
+  })
+
+  const failedEntitiesSource = result.failed_entities ?? result.failedEntities ?? []
+  const failedEntities = Array.isArray(failedEntitiesSource) ? failedEntitiesSource : []
+
   return {
     synced: Number(result.synced ?? 0),
     failed: Number(result.failed ?? 0),
     total: Number(result.total ?? 0),
-    rate_limited: Number(result.rate_limited ?? 0)
+    rateLimited: Number(result.rate_limited ?? result.rateLimited ?? 0),
+    entities,
+    failedEntities
   }
 }

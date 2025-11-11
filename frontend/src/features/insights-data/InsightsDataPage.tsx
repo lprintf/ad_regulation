@@ -4,9 +4,10 @@ import { Modal, message } from 'antd'
 import {
   fetchInsightsData,
   syncEntityNames,
-  type InsightsDataQuery
+  type InsightsDataQuery,
+  type SyncedEntityName
 } from '../../api/insights'
-import type { InsightRecord } from '../../types/insights'
+import type { InsightRecord, InsightsDataResponse } from '../../types/insights'
 import AdAccountSelect from '../../components/AdAccountSelect'
 import {
   LineChart,
@@ -54,6 +55,20 @@ const METRIC_COLUMNS: Array<{
   }
 ]
 
+const REALTIME_ENTITY_FIELDS = [
+  'ad_name',
+  'adset_name',
+  'campaign_name',
+  'adset_id',
+  'campaign_id'
+] as const
+
+const DATA_SOURCE_LABEL: Record<InsightsDataQuery['source'], string> = {
+  database: '数据库',
+  realtime: '实时数据',
+  hybrid: '数据库 + 实时数据'
+}
+
 const getDefaultDateRange = () => {
   const today = new Date()
   const until = new Date(today.getTime() - 3 * 24 * 60 * 60 * 1000)
@@ -80,6 +95,8 @@ const InsightsDataPage = () => {
   const [level, setLevel] = useState<'ad' | 'adset' | 'campaign'>('ad')
   const [timeIncrement, setTimeIncrement] = useState<'daily' | 'aggregate'>('daily')
   const [breakdowns, setBreakdowns] = useState('')
+  const [useDatabaseSource, setUseDatabaseSource] = useState(true)
+  const [useRealtimeSource, setUseRealtimeSource] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [activeQuery, setActiveQuery] = useState<InsightsDataQuery | null>(null)
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
@@ -197,6 +214,55 @@ const InsightsDataPage = () => {
     return Array.from(grouped.values()).sort((a, b) => a.entityId.localeCompare(b.entityId))
   }, [insights, getEntityId])
 
+  const applySyncedNamesToCache = useCallback(
+    (entities: SyncedEntityName[]) => {
+      if (!entities.length || !activeQuery) {
+        return
+      }
+
+      const currentQuery = activeQuery
+      const queryKey = ['insights-data', currentQuery] as const
+      const nameMap = new Map<string, string | null>(
+        entities.map(item => [item.entityId, item.entityName ?? null])
+      )
+
+      queryClient.setQueryData<InsightsDataResponse | undefined>(queryKey, previous => {
+        if (!previous?.insights?.length) {
+          return previous
+        }
+
+        const updatedInsights = previous.insights.map(record => {
+          const entityId =
+            currentQuery.level === 'adset'
+              ? record.adsetId
+              : currentQuery.level === 'campaign'
+                ? record.campaignId
+                : record.adId
+
+          if (!entityId || !nameMap.has(entityId)) {
+            return record
+          }
+
+          const entityName = nameMap.get(entityId) ?? null
+
+          if (currentQuery.level === 'adset') {
+            return { ...record, adsetName: entityName }
+          }
+          if (currentQuery.level === 'campaign') {
+            return { ...record, campaignName: entityName }
+          }
+          return { ...record, adName: entityName }
+        })
+
+        return {
+          ...previous,
+          insights: updatedInsights
+        }
+      })
+    },
+    [activeQuery, queryClient]
+  )
+
   // Auto-sync entity names when insights data loads
   useEffect(() => {
     console.log('[Entity Sync] useEffect triggered', {
@@ -212,7 +278,7 @@ const InsightsDataPage = () => {
     }
 
     // Create a unique key for this query to track if we've already synced it
-    const queryKey = `${activeQuery.accountId}-${activeQuery.level}-${activeQuery.since}-${activeQuery.until}`
+    const queryKey = `${activeQuery.accountId}-${activeQuery.level}-${activeQuery.since}-${activeQuery.until}-${activeQuery.source}`
     console.log('[Entity Sync] Query key:', queryKey)
 
     // Skip if we've already synced this query
@@ -252,9 +318,9 @@ const InsightsDataPage = () => {
           console.log('[Entity Sync] Sync result:', result)
 
           // Check if rate limiting occurred
-          if (result.rate_limited > 0) {
+          if (result.rateLimited > 0) {
             message.warning({
-              content: `同步受到速率限制 (成功: ${result.synced}, 失败: ${result.failed}, 限制: ${result.rate_limited})。请稍后再试。`,
+              content: `同步受到速率限制 (成功: ${result.synced}, 失败: ${result.failed}, 限制: ${result.rateLimited})。请稍后再试。`,
               key: 'sync',
               duration: 5
             })
@@ -284,6 +350,10 @@ const InsightsDataPage = () => {
               duration: 3
             })
 
+            if (result.entities.length > 0) {
+              applySyncedNamesToCache(result.entities)
+            }
+
             // If some entities failed, remove from synced set to allow retry
             if (result.failed > 0) {
               syncedQueriesRef.current.delete(queryKey)
@@ -305,7 +375,7 @@ const InsightsDataPage = () => {
     } else {
       console.log('[Entity Sync] No unnamed entities found')
     }
-  }, [insights, activeQuery, getEntityId, getEntityName, queryResult])
+  }, [insights, activeQuery, getEntityId, getEntityName, queryClient, queryResult, applySyncedNamesToCache])
 
   // Get historical data for selected entity
   const selectedEntityData = useMemo(() => {
@@ -327,11 +397,22 @@ const InsightsDataPage = () => {
       setFormError('起始日期不能晚于结束日期')
       return
     }
+    if (!useDatabaseSource && !useRealtimeSource) {
+      setFormError('请至少选择一个数据源（数据库或实时数据）')
+      return
+    }
     const normalizedAccount = normalizeAccountId(accountInput)
     if (!normalizedAccount) {
       setFormError('请输入广告账号 ID，例如 act_123456789')
       return
     }
+    const dataSourceMode: InsightsDataQuery['source'] =
+      useDatabaseSource && useRealtimeSource
+        ? 'hybrid'
+        : useRealtimeSource
+          ? 'realtime'
+          : 'database'
+    const shouldRequestRealtimeFields = dataSourceMode !== 'database'
     setFormError(null)
     setActiveQuery({
       accountId: normalizedAccount,
@@ -339,7 +420,9 @@ const InsightsDataPage = () => {
       until: untilDate,
       level,
       timeIncrement: timeIncrement === 'daily' ? 1 : null,
-      breakdowns: breakdowns.trim() || undefined
+      breakdowns: breakdowns.trim() || undefined,
+      source: dataSourceMode,
+      fields: shouldRequestRealtimeFields ? [...REALTIME_ENTITY_FIELDS] : undefined
     })
   }
 
@@ -450,41 +533,42 @@ const InsightsDataPage = () => {
             />
             <div className="form-hint">多个维度以逗号分隔，留空表示不拆分。</div>
           </label>
+          <div className="form-label" style={{ flex: '2 1 320px' }}>
+            <span>数据源</span>
+            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 500 }}
+              >
+                <input
+                  type="checkbox"
+                  checked={useDatabaseSource}
+                  onChange={event => setUseDatabaseSource(event.target.checked)}
+                />
+                <span>数据库</span>
+              </label>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 500 }}
+              >
+                <input
+                  type="checkbox"
+                  checked={useRealtimeSource}
+                  onChange={event => setUseRealtimeSource(event.target.checked)}
+                />
+                <span>实时数据</span>
+              </label>
+            </div>
+            <div className="form-hint">
+              至少勾选一个选项。勾选“实时数据”时会直接从 Facebook 拉取最新数据；同时勾选两个选项时自动调用混合接口，用数据库 + 最新实时数据拼接结果。
+            </div>
+          </div>
 
           {formError && (
             <div style={{ flexBasis: '100%', color: 'var(--color-danger)' }}>{formError}</div>
           )}
           <div style={{ display: 'flex', gap: '0.75rem' }}>
             <button className="button button--primary" type="submit" disabled={isLoading}>
-              {isLoading ? '查询中…' : '查询洞察数据'}
+              {isLoading ? '查询中…' : '查询 / 刷新数据'}
             </button>
-            {activeQuery && (
-              <>
-                <button
-                  className="button button--ghost"
-                  type="button"
-                  onClick={() => setActiveQuery({ ...activeQuery })}
-                  disabled={isLoading}
-                >
-                  刷新数据
-                </button>
-                <button
-                  className="button button--ghost"
-                  type="button"
-                  onClick={async () => {
-                    // Clear the synced queries cache to force re-sync
-                    const queryKey = `${activeQuery.accountId}-${activeQuery.level}-${activeQuery.since}-${activeQuery.until}`
-                    syncedQueriesRef.current.delete(queryKey)
-                    // Invalidate cache and refetch to trigger auto-sync
-                    await queryClient.invalidateQueries({ queryKey: ['insights-data', activeQuery] })
-                    queryResult.refetch()
-                  }}
-                  disabled={isLoading}
-                >
-                  刷新实体名称
-                </button>
-              </>
-            )}
           </div>
         </form>
       </section>
@@ -495,7 +579,9 @@ const InsightsDataPage = () => {
             <div className="card__title">洞察结果</div>
             <div className="card__subtitle">
               {activeQuery
-                ? `账号 ${activeQuery.accountId} · ${activeQuery.since} → ${activeQuery.until}`
+                ? `账号 ${activeQuery.accountId} · ${activeQuery.since} → ${activeQuery.until} · 数据源：${
+                    DATA_SOURCE_LABEL[activeQuery.source]
+                  }`
                 : '提交查询后将展示结果。'}
             </div>
           </div>
