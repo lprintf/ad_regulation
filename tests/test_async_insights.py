@@ -58,7 +58,7 @@ async def test_async_insights_workflow():
 
         try:
             response = await client.post(
-                f"{BASE_URL}/insights/async", headers=headers, json=payload
+                f"{BASE_URL}/insights/jobs", headers=headers, json=payload
             )
 
             print(f"Status Code: {response.status_code}")
@@ -96,7 +96,7 @@ async def test_async_insights_workflow():
         for i in range(max_polls):
             try:
                 status_response = await client.get(
-                    f"{BASE_URL}/insights/async/{job_id}",
+                    f"{BASE_URL}/insights/jobs/{job_id}",
                     headers={"X-User-Id": USER_ID},
                     params={"ad_account_id": AD_ACCOUNT_ID},
                 )
@@ -156,7 +156,7 @@ async def test_async_insights_workflow():
 
         try:
             result_response = await client.get(
-                f"{BASE_URL}/insights/async/{job_id}/result",
+                f"{BASE_URL}/insights/jobs/{job_id}/result",
                 headers={"X-User-Id": USER_ID},
                 params={"ad_account_id": AD_ACCOUNT_ID},
             )
@@ -207,7 +207,7 @@ async def test_async_job_status_check():
     async with httpx.AsyncClient(timeout=30.0, trust_env=False) as client:
         try:
             response = await client.get(
-                f"{BASE_URL}/insights/async/{fake_job_id}",
+                f"{BASE_URL}/insights/jobs/{fake_job_id}",
                 headers=headers,
                 params={"ad_account_id": AD_ACCOUNT_ID},
             )

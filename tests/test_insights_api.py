@@ -77,7 +77,7 @@ async def test_sync_insights_daily():
     print_test_header("Sync Insights - Daily Data")
 
     headers = {"X-User-Id": USER_ID}
-    params = {
+    payload = {
         "ad_account_id": AD_ACCOUNT_ID,
         "since": since,
         "until": until,
@@ -88,8 +88,8 @@ async def test_sync_insights_daily():
     print(f"Fetching daily insights from {since} to {until}...")
 
     async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
-        response = await client.get(
-            f"{BASE_URL}/insights/sync", headers=headers, params=params
+        response = await client.post(
+            f"{BASE_URL}/insights/sync", headers=headers, json=payload
         )
         print_response(response)
 
@@ -107,7 +107,7 @@ async def test_sync_insights_aggregate():
     print_test_header("Sync Insights - Aggregated Data")
 
     headers = {"X-User-Id": USER_ID}
-    params = {
+    payload = {
         "ad_account_id": AD_ACCOUNT_ID,
         "since": since,
         "until": until,
@@ -118,8 +118,8 @@ async def test_sync_insights_aggregate():
     print(f"Fetching aggregated insights from {since} to {until}...")
 
     async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
-        response = await client.get(
-            f"{BASE_URL}/insights/sync", headers=headers, params=params
+        response = await client.post(
+            f"{BASE_URL}/insights/sync", headers=headers, json=payload
         )
         print_response(response)
 
@@ -136,7 +136,7 @@ async def test_sync_insights_with_breakdowns():
     print_test_header("Sync Insights - With Country Breakdown")
 
     headers = {"X-User-Id": USER_ID}
-    params = {
+    payload = {
         "ad_account_id": AD_ACCOUNT_ID,
         "since": since,
         "until": until,
@@ -148,8 +148,8 @@ async def test_sync_insights_with_breakdowns():
     print(f"Fetching insights with country breakdown from {since} to {until}...")
 
     async with httpx.AsyncClient(timeout=60.0, trust_env=False) as client:
-        response = await client.get(
-            f"{BASE_URL}/insights/sync", headers=headers, params=params
+        response = await client.post(
+            f"{BASE_URL}/insights/sync", headers=headers, json=payload
         )
         print_response(response)
 
@@ -170,20 +170,20 @@ async def test_error_handling():
     async with httpx.AsyncClient(trust_env=False) as client:
         # Test 1: Missing required parameter
         print("\nTest 1: Missing required parameter (ad_account_id)")
-        response = await client.get(
+        response = await client.post(
             f"{BASE_URL}/insights/sync",
             headers=headers,
-            params={"since": since, "until": until},
+            json={"since": since, "until": until},
         )
         print(f"Status: {response.status_code} (Expected: 422)")
         assert response.status_code == 422
 
         # Test 2: Invalid date format
         print("\nTest 2: Invalid date format")
-        response = await client.get(
+        response = await client.post(
             f"{BASE_URL}/insights/sync",
             headers=headers,
-            params={
+            json={
                 "ad_account_id": AD_ACCOUNT_ID,
                 "since": "2025-13-45",  # Invalid date
                 "until": until,
@@ -194,9 +194,9 @@ async def test_error_handling():
 
         # Test 3: Missing authentication header
         print("\nTest 3: Missing X-User-Id header")
-        response = await client.get(
+        response = await client.post(
             f"{BASE_URL}/insights/sync",
-            params={
+            json={
                 "ad_account_id": AD_ACCOUNT_ID,
                 "since": since,
                 "until": until,

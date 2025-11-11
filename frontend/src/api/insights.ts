@@ -29,7 +29,7 @@ const mapAccountStatusFromApi = (item: any): InsightAccountSyncStatus => {
 }
 
 export const fetchInsightsSyncStatus = async (): Promise<InsightAccountSyncStatus[]> => {
-  const { data } = await apiClient.get('/insights/sync/accounts')
+  const { data } = await apiClient.get('/insights/sync/status')
   const payload = data?.data ?? data ?? {}
   const items: any[] = Array.isArray(payload?.items) ? payload.items : []
   return items.map(mapAccountStatusFromApi)
@@ -151,58 +151,58 @@ const buildDbParams = (params: InsightsDataQuery) => {
   return queryParams
 }
 
-const buildRealtimeParams = (params: InsightsDataQuery) => {
-  const queryParams: Record<string, unknown> = {
+const buildRealtimePayload = (params: InsightsDataQuery) => {
+  const payload: Record<string, unknown> = {
     ad_account_id: params.accountId,
     since: params.since,
     until: params.until,
     ...buildCommonParams(params)
   }
   if (params.timeIncrement !== undefined) {
-    queryParams.time_increment = params.timeIncrement
+    payload.time_increment = params.timeIncrement
   }
   if (params.breakdowns) {
-    queryParams.breakdowns = params.breakdowns
+    payload.breakdowns = params.breakdowns
   }
   if (params.fields?.length) {
-    queryParams.fields = params.fields.join(',')
+    payload.fields = params.fields
   }
-  return queryParams
+  return payload
 }
 
-const buildHybridRealtimeParams = (params: InsightsDataQuery) => {
-  const queryParams: Record<string, unknown> = {
+const buildFromLastPayload = (params: InsightsDataQuery) => {
+  const payload: Record<string, unknown> = {
     ad_account_id: params.accountId,
     until: params.until,
     ...buildCommonParams(params)
   }
   if (params.timeIncrement !== undefined) {
-    queryParams.time_increment = params.timeIncrement
+    payload.time_increment = params.timeIncrement
   }
   if (params.breakdowns) {
-    queryParams.breakdowns = params.breakdowns
+    payload.breakdowns = params.breakdowns
   }
   if (params.fields?.length) {
-    queryParams.fields = params.fields.join(',')
+    payload.fields = params.fields
   }
-  return queryParams
+  return payload
 }
 
 export const fetchInsightsData = async (params: InsightsDataQuery): Promise<InsightsDataResponse> => {
   if (params.source === 'database') {
-    const { data } = await apiClient.get('/insights/query', { params: buildDbParams(params) })
+    const { data } = await apiClient.get('/insights', { params: buildDbParams(params) })
     return mapApiResponse(data, params.since, params.until)
   }
 
   if (params.source === 'realtime') {
-    const { data } = await apiClient.get('/insights/sync', { params: buildRealtimeParams(params) })
+    const { data } = await apiClient.post('/insights/sync', buildRealtimePayload(params))
     return mapApiResponse(data, params.since, params.until)
   }
 
   // hybrid: fetch DB + realtime (gap) and merge
   const [dbResponse, realtimeResponse] = await Promise.all([
-    apiClient.get('/insights/query', { params: buildDbParams(params) }),
-    apiClient.get('/insights/sync/from-last', { params: buildHybridRealtimeParams(params) })
+    apiClient.get('/insights', { params: buildDbParams(params) }),
+    apiClient.post('/insights/sync/from-last', buildFromLastPayload(params))
   ])
 
   const dbResult = mapApiResponse(dbResponse.data, params.since, params.until)
@@ -245,7 +245,7 @@ export interface InsightsSyncTriggerPayload {
 export const triggerInsightsSync = async (
   payload: InsightsSyncTriggerPayload
 ): Promise<InsightSyncTriggerResult> => {
-  const { data } = await apiClient.post('/insights/sync/trigger', payload)
+  const { data } = await apiClient.post('/insights/sync/manual', payload)
   const body = data?.data ?? data ?? {}
   const total =
     body?.total_accounts ??
@@ -306,26 +306,20 @@ export interface SyncEntityNamesResult {
 export const syncEntityNames = async (
   payload: SyncEntityNamesPayload
 ): Promise<SyncEntityNamesResult> => {
-  const params = new URLSearchParams({
-    ad_account_id: payload.adAccountId,
-    entity_type: payload.entityType
-  })
-
-  // Add entity_ids as multiple query parameters
-  payload.entityIds.forEach(id => {
-    params.append('entity_ids', id)
-  })
-
   // Entity-name sync can take a while (sequential FB API calls). Scale timeout with request size.
   const baseTimeout = 30000
   const perEntityBuffer = 1200 // ms per entity to allow API + backoff
   const timeoutMs = Math.min(120000, Math.max(baseTimeout, payload.entityIds.length * perEntityBuffer))
 
-  const { data } = await apiClient.post(
-    `/insights/sync-entity-names?${params.toString()}`,
-    null,
-    { timeout: timeoutMs }
-  )
+  const requestBody = {
+    ad_account_id: payload.adAccountId,
+    entity_ids: payload.entityIds,
+    entity_type: payload.entityType
+  }
+
+  const { data } = await apiClient.post('/insights/entity-name-syncs', requestBody, {
+    timeout: timeoutMs
+  })
   const result = data?.data ?? data ?? {}
 
   const entitiesSource = Array.isArray(result.entities) ? result.entities : []

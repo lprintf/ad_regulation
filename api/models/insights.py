@@ -68,7 +68,7 @@ DailyInsight = InsightRecord
 
 
 class InsightsRequest(BaseModel):
-    """Request model for fetching insights (used for POST async endpoint)."""
+    """Base request model for fetching insights data."""
 
     ad_account_id: str = Field(
         ...,
@@ -99,6 +99,49 @@ class InsightsRequest(BaseModel):
         default=None,
         description="Comma-separated breakdown dimensions (e.g., 'country', 'hourly_stats_aggregated_by_advertiser_time_zone')",
         examples=["country", "hourly_stats_aggregated_by_advertiser_time_zone"],
+    )
+
+
+class InsightsSyncRequest(InsightsRequest):
+    """Request payload for synchronous insights fetch."""
+
+    fields: list[str] | None = Field(
+        default=None,
+        description="Additional fields to request from Facebook (e.g., ['ad_name','adset_name'])",
+    )
+
+
+class InsightsFromLastRequest(BaseModel):
+    """Request payload for filling realtime window using last sync metadata."""
+
+    ad_account_id: str = Field(
+        ...,
+        description="Ad account ID (with or without act_ prefix)",
+        examples=["act_123456789", "123456789"],
+    )
+    until: str = Field(
+        ...,
+        description="End date (YYYY-MM-DD)",
+        examples=["2025-01-31"],
+    )
+    level: str = Field(
+        default="ad",
+        description="Aggregation level: ad, adset, or campaign",
+        examples=["ad", "adset", "campaign"],
+    )
+    time_increment: int | None = Field(
+        default=None,
+        description="Time increment: 1=daily, None=aggregate all",
+        examples=[1, None],
+    )
+    breakdowns: str | None = Field(
+        default=None,
+        description="Comma-separated breakdown dimensions (e.g., 'country', 'hourly_stats_aggregated_by_advertiser_time_zone')",
+        examples=["country", "hourly_stats_aggregated_by_advertiser_time_zone"],
+    )
+    fields: list[str] | None = Field(
+        default=None,
+        description="Additional fields to request from Facebook (e.g., ['ad_name','adset_name'])",
     )
 
 
@@ -229,6 +272,27 @@ class EntityNamesSyncResult(BaseModel):
     )
     failed_entities: list[str] = Field(
         default_factory=list, description="IDs of entities that failed to sync"
+    )
+
+
+class EntityNamesSyncRequest(BaseModel):
+    """Request payload for syncing entity names."""
+
+    ad_account_id: str = Field(
+        ...,
+        description="Ad account ID (with or without act_ prefix)",
+        examples=["act_123456789", "123456789"],
+    )
+    entity_ids: list[str] = Field(
+        ...,
+        description="List of entity IDs to sync",
+        min_length=1,
+        examples=[["123", "456", "789"]],
+    )
+    entity_type: str = Field(
+        ...,
+        description="Entity type (ad, adset, or campaign)",
+        examples=["ad"],
     )
 
 

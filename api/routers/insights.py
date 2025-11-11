@@ -13,12 +13,15 @@ from api.models.insights import (
     AsyncJobCreateResponse,
     AsyncJobStatus,
     AsyncJobStatusResponse,
+    EntityNamesSyncRequest,
     EntityNamesSyncResult,
+    InsightAccountSyncStatus,
     InsightRecord,
+    InsightsAccountSyncResponse,
+    InsightsFromLastRequest,
     InsightsRequest,
     InsightsResponse,
-    InsightAccountSyncStatus,
-    InsightsAccountSyncResponse,
+    InsightsSyncRequest,
     InsightsSyncTriggerRequest,
     InsightsSyncTriggerResponse,
     SyncStatus,
@@ -34,7 +37,7 @@ router = APIRouter(prefix="/insights", tags=["Insights"])
 # ===== Database Query Endpoint =====
 
 
-@router.get("/query", response_model=SuccessResponse[InsightsResponse])
+@router.get("", response_model=SuccessResponse[InsightsResponse])
 async def query_insights_from_database(
     ad_account_id: Annotated[
         str,
@@ -91,7 +94,7 @@ async def query_insights_from_database(
     - level="adset": Aggregates ad data by adset_id and date
     - level="campaign": Aggregates ad data by campaign_id and date
 
-    Use this for viewing historical data. Use /insights/sync or /insights/async for fetching new data from Facebook.
+    Use this for viewing historical data. Use /insights/sync or /insights/jobs for fetching new data from Facebook.
 
     Args:
         ad_account_id: Ad account ID (with or without act_ prefix)
@@ -108,13 +111,13 @@ async def query_insights_from_database(
     Example:
         ```
         # Ad-level query
-        GET /insights/query?ad_account_id=act_123&since=2024-01-01&until=2024-01-31&level=ad&time_increment=1
+        GET /insights?ad_account_id=act_123&since=2024-01-01&until=2024-01-31&level=ad&time_increment=1
 
         # AdSet-level query (aggregates ads by adset)
-        GET /insights/query?ad_account_id=act_123&since=2024-01-01&until=2024-01-31&level=adset&time_increment=1
+        GET /insights?ad_account_id=act_123&since=2024-01-01&until=2024-01-31&level=adset&time_increment=1
 
         # Campaign-level query (aggregates ads by campaign)
-        GET /insights/query?ad_account_id=act_123&since=2024-01-01&until=2024-01-31&level=campaign&time_increment=1
+        GET /insights?ad_account_id=act_123&since=2024-01-01&until=2024-01-31&level=campaign&time_increment=1
         ```
     """
     try:
@@ -165,59 +168,9 @@ async def query_insights_from_database(
 # ===== Synchronous Endpoint =====
 
 
-@router.get("/sync", response_model=SuccessResponse[InsightsResponse])
+@router.post("/sync", response_model=SuccessResponse[InsightsResponse])
 async def fetch_insights_sync(
-    ad_account_id: Annotated[
-        str,
-        Query(
-            description="Ad account ID (with or without act_ prefix)",
-            examples=["act_123456789"],
-        ),
-    ],
-    since: Annotated[
-        str,
-        Query(
-            description="Start date in YYYY-MM-DD format",
-            examples=["2025-01-01"],
-            pattern=r"^\d{4}-\d{2}-\d{2}$",
-        ),
-    ],
-    until: Annotated[
-        str,
-        Query(
-            description="End date in YYYY-MM-DD format",
-            examples=["2025-01-31"],
-            pattern=r"^\d{4}-\d{2}-\d{2}$",
-        ),
-    ],
-    level: Annotated[
-        str,
-        Query(
-            description="Aggregation level: ad, adset, or campaign",
-            examples=["ad"],
-        ),
-    ] = "ad",
-    time_increment: Annotated[
-        int | None,
-        Query(
-            description="Time increment: 1=daily, null=aggregate all",
-            examples=[1, None],
-        ),
-    ] = None,
-    breakdowns: Annotated[
-        str | None,
-        Query(
-            description="Comma-separated breakdown dimensions (e.g., 'country', 'hourly_stats_aggregated_by_advertiser_time_zone')",
-            examples=["country", "hourly_stats_aggregated_by_advertiser_time_zone"],
-        ),
-    ] = None,
-    fields: Annotated[
-        str | None,
-        Query(
-            description="Comma-separated additional fields to request from Facebook (e.g., 'ad_name,adset_name,campaign_name')",
-            examples=["ad_name,adset_name,campaign_name"],
-        ),
-    ] = None,
+    request: InsightsSyncRequest,
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsResponse]:
     """
@@ -225,12 +178,7 @@ async def fetch_insights_sync(
     Returns data immediately (may timeout for large date ranges).
 
     Args:
-        ad_account_id: Ad account ID (with or without act_ prefix)
-        since: Start date in YYYY-MM-DD format
-        until: End date in YYYY-MM-DD format
-        level: Aggregation level (ad, adset, or campaign), defaults to "ad"
-        time_increment: Time increment (1=daily, None=aggregate all)
-        breakdowns: Breakdown dimensions (comma-separated)
+        request: Payload describing the desired insights range/aggregation
         user_id: Current user ID from X-User-Id header
 
     Returns:
@@ -238,24 +186,24 @@ async def fetch_insights_sync(
 
     Example:
         ```
-        GET /insights/sync?ad_account_id=act_123&since=2025-01-01&until=2025-01-31&time_increment=1
+        POST /insights/sync
+        {
+            "ad_account_id": "act_123",
+            "since": "2025-01-01",
+            "until": "2025-01-31",
+            "time_increment": 1
+        }
         ```
     """
     try:
-        field_list = (
-            [field.strip() for field in fields.split(",") if field.strip()]
-            if fields
-            else None
-        )
-
         result = await InsightsService.fetch_insights_sync(
-            ad_account_id=ad_account_id,
-            since=since,
-            until=until,
-            level=level,
-            time_increment=time_increment,
-            breakdowns=breakdowns,
-            fields=field_list,
+            ad_account_id=request.ad_account_id,
+            since=request.since,
+            until=request.until,
+            level=request.level,
+            time_increment=request.time_increment,
+            breakdowns=request.breakdowns,
+            fields=request.fields,
         )
 
         insights_data = InsightsResponse(
@@ -293,51 +241,9 @@ async def fetch_insights_sync(
         )
 
 
-@router.get("/sync/from-last", response_model=SuccessResponse[InsightsResponse])
+@router.post("/sync/from-last", response_model=SuccessResponse[InsightsResponse])
 async def fetch_insights_from_last_sync(
-    ad_account_id: Annotated[
-        str,
-        Query(
-            description="Ad account ID (with or without act_ prefix)",
-            examples=["act_123456789"],
-        ),
-    ],
-    until: Annotated[
-        str,
-        Query(
-            description="End date in YYYY-MM-DD format",
-            examples=["2025-01-31"],
-            pattern=r"^\d{4}-\d{2}-\d{2}$",
-        ),
-    ],
-    level: Annotated[
-        str,
-        Query(
-            description="Aggregation level: ad, adset, or campaign",
-            examples=["ad"],
-        ),
-    ] = "ad",
-    time_increment: Annotated[
-        int | None,
-        Query(
-            description="Time increment: 1=daily, null=aggregate all",
-            examples=[1, None],
-        ),
-    ] = None,
-    breakdowns: Annotated[
-        str | None,
-        Query(
-            description="Comma-separated breakdown dimensions (e.g., 'country', 'hourly_stats_aggregated_by_advertiser_time_zone')",
-            examples=["country", "hourly_stats_aggregated_by_advertiser_time_zone"],
-        ),
-    ] = None,
-    fields: Annotated[
-        str | None,
-        Query(
-            description="Comma-separated additional fields to request from Facebook (e.g., 'ad_name,adset_name,campaign_name')",
-            examples=["ad_name,adset_name,campaign_name"],
-        ),
-    ] = None,
+    request: InsightsFromLastRequest,
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsResponse]:
     """
@@ -345,19 +251,13 @@ async def fetch_insights_from_last_sync(
     the account's last synced date (until + 1 day) up to the requested until date.
     """
     try:
-        field_list = (
-            [field.strip() for field in fields.split(",") if field.strip()]
-            if fields
-            else None
-        )
-
         result = await InsightsService.fetch_insights_from_last_sync(
-            ad_account_id=ad_account_id,
-            until=until,
-            level=level,
-            time_increment=time_increment,
-            breakdowns=breakdowns,
-            fields=field_list,
+            ad_account_id=request.ad_account_id,
+            until=request.until,
+            level=request.level,
+            time_increment=request.time_increment,
+            breakdowns=request.breakdowns,
+            fields=request.fields,
         )
 
         insights_data = InsightsResponse(
@@ -396,7 +296,7 @@ async def fetch_insights_from_last_sync(
 
 
 @router.get(
-    "/sync/accounts",
+    "/sync/status",
     response_model=SuccessResponse[InsightsAccountSyncResponse],
 )
 async def list_account_sync_status(
@@ -438,7 +338,7 @@ async def list_account_sync_status(
 
 
 @router.post(
-    "/sync/trigger",
+    "/sync/manual",
     response_model=SuccessResponse[InsightsSyncTriggerResponse],
 )
 async def trigger_insights_sync(
@@ -481,14 +381,14 @@ async def trigger_insights_sync(
 # ===== Asynchronous Endpoints =====
 
 
-@router.post("/async", response_model=SuccessResponse[AsyncJobCreateResponse])
+@router.post("/jobs", response_model=SuccessResponse[AsyncJobCreateResponse])
 async def create_async_job(
     request: InsightsRequest,
     user_id: Annotated[str, Depends(get_current_user)],
 ) -> SuccessResponse[AsyncJobCreateResponse]:
     """
     Create an async Facebook Ads Insights job.
-    Returns job_id immediately; use GET /insights/async/{job_id} to check status.
+    Returns job_id immediately; use GET /insights/jobs/{job_id} to check status.
 
     Args:
         request: Insights request parameters
@@ -558,7 +458,7 @@ async def create_async_job(
 
 
 @router.get(
-    "/async/{job_id}", response_model=SuccessResponse[AsyncJobStatusResponse]
+    "/jobs/{job_id}", response_model=SuccessResponse[AsyncJobStatusResponse]
 )
 async def check_job_status(
     job_id: str,
@@ -584,7 +484,7 @@ async def check_job_status(
 
     Example:
         ```
-        GET /insights/async/12345678?ad_account_id=act_123456789
+        GET /insights/jobs/12345678?ad_account_id=act_123456789
         ```
 
         Response:
@@ -641,7 +541,7 @@ async def check_job_status(
 
 
 @router.get(
-    "/async/{job_id}/result", response_model=SuccessResponse[InsightsResponse]
+    "/jobs/{job_id}/result", response_model=SuccessResponse[InsightsResponse]
 )
 async def get_job_result(
     job_id: str,
@@ -670,7 +570,7 @@ async def get_job_result(
 
     Example:
         ```
-        GET /insights/async/12345678/result?ad_account_id=act_123456789
+        GET /insights/jobs/12345678/result?ad_account_id=act_123456789
         ```
 
         Response:
@@ -732,31 +632,11 @@ async def get_job_result(
 
 
 @router.post(
-    "/sync-entity-names",
+    "/entity-name-syncs",
     response_model=SuccessResponse[EntityNamesSyncResult],
 )
 async def sync_entity_names(
-    ad_account_id: Annotated[
-        str,
-        Query(
-            description="Ad account ID (with or without act_ prefix)",
-            examples=["act_123456789"],
-        ),
-    ],
-    entity_ids: Annotated[
-        list[str],
-        Query(
-            description="List of entity IDs to sync",
-            examples=[["123", "456", "789"]],
-        ),
-    ],
-    entity_type: Annotated[
-        str,
-        Query(
-            description="Entity type (ad, adset, or campaign)",
-            examples=["ad"],
-        ),
-    ],
+    request: EntityNamesSyncRequest,
     _current_user: str = Depends(get_current_user),
 ) -> SuccessResponse[EntityNamesSyncResult]:
     """
@@ -774,16 +654,16 @@ async def sync_entity_names(
         Sync result with statistics
     """
     try:
-        if entity_type not in ["ad", "adset", "campaign"]:
+        if request.entity_type not in ["ad", "adset", "campaign"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid entity_type: {entity_type}. Must be ad, adset, or campaign",
+                detail=f"Invalid entity_type: {request.entity_type}. Must be ad, adset, or campaign",
             )
 
         result = await EntityNamesSyncService.sync_entity_names(
-            account_id=ad_account_id,
-            entity_ids=entity_ids,
-            entity_type=entity_type,
+            account_id=request.ad_account_id,
+            entity_ids=request.entity_ids,
+            entity_type=request.entity_type,
         )
 
         return SuccessResponse(
