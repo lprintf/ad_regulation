@@ -256,6 +256,7 @@ async def _execute_query_from_last(
             time_increment=request.time_increment,
             breakdowns=request.breakdowns,
             fields=request.fields,
+            cache_window_hint=request.cache_window_hint,
         )
 
         insights_data = InsightsResponse(

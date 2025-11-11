@@ -69,6 +69,20 @@ const DATA_SOURCE_LABEL: Record<InsightsDataQuery['source'], string> = {
   hybrid: '数据库 + 实时数据'
 }
 
+const areQueriesEqual = (a: InsightsDataQuery, b: InsightsDataQuery) => {
+  const normalizeFields = (fields?: string[]) => (fields?.join('|') ?? '')
+  return (
+    a.accountId === b.accountId &&
+    a.since === b.since &&
+    a.until === b.until &&
+    (a.level ?? 'ad') === (b.level ?? 'ad') &&
+    (a.timeIncrement ?? null) === (b.timeIncrement ?? null) &&
+    (a.breakdowns ?? '') === (b.breakdowns ?? '') &&
+    a.source === b.source &&
+    normalizeFields(a.fields) === normalizeFields(b.fields)
+  )
+}
+
 const getDefaultDateRange = () => {
   const today = new Date()
   const until = new Date(today.getTime() - 3 * 24 * 60 * 60 * 1000)
@@ -133,12 +147,12 @@ const InsightsDataPage = () => {
 
   const getEntityName = useCallback((record: InsightRecord): string | null => {
     if (resultLevel === 'adset') {
-      return record.adsetName
+      return record.adsetName ?? null
     }
     if (resultLevel === 'campaign') {
-      return record.campaignName
+      return record.campaignName ?? null
     }
-    return record.adName
+    return record.adName ?? null
   }, [resultLevel])
 
   const queryResult = useQuery({
@@ -312,7 +326,7 @@ const InsightsDataPage = () => {
           const result = await syncEntityNames({
             adAccountId: activeQuery.accountId,
             entityIds: Array.from(unnamedEntityIds),
-            entityType: activeQuery.level
+            entityType: activeQuery.level ?? 'ad'
           })
 
           console.log('[Entity Sync] Sync result:', result)
@@ -414,7 +428,7 @@ const InsightsDataPage = () => {
           : 'database'
     const shouldRequestRealtimeFields = dataSourceMode !== 'database'
     setFormError(null)
-    setActiveQuery({
+    const nextQuery: InsightsDataQuery = {
       accountId: normalizedAccount,
       since: sinceDate,
       until: untilDate,
@@ -423,7 +437,14 @@ const InsightsDataPage = () => {
       breakdowns: breakdowns.trim() || undefined,
       source: dataSourceMode,
       fields: shouldRequestRealtimeFields ? [...REALTIME_ENTITY_FIELDS] : undefined
-    })
+    }
+    const shouldRefetchSameQuery = activeQuery ? areQueriesEqual(activeQuery, nextQuery) : false
+    setActiveQuery(nextQuery)
+
+    if (shouldRefetchSameQuery) {
+      // Force refetch so repeated submissions with identical params still hit the API.
+      void queryResult.refetch()
+    }
   }
 
   const handleRowClick = (entityId: string) => {

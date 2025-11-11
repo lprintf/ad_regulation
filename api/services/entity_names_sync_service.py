@@ -24,6 +24,23 @@ class EntityNamesSyncService:
     """Service for syncing ad entity names from Facebook API"""
 
     @staticmethod
+    def _schedule_background_write(operations: list[UpdateOne]) -> None:
+        """Fire-and-forget bulk write so API response isn't blocked by DB I/O."""
+
+        if not operations:
+            return
+
+        async def _run(batch: list[UpdateOne]) -> None:
+            collection = get_document_collection(AdEntityNamesDocument)
+            try:
+                await collection.bulk_write(batch, ordered=False)
+                print(f"[EntityNamesSync] Background bulk write completed for {len(batch)} entities")
+            except Exception as exc:
+                print(f"[EntityNamesSync] Background bulk write failed ({len(batch)} entities): {exc}")
+
+        asyncio.create_task(_run(operations))
+
+    @staticmethod
     async def fetch_entity_name(
         entity_type: Literal["campaign", "adset", "ad"],
         entity_id: str,
@@ -252,18 +269,17 @@ class EntityNamesSyncService:
                 }
             )
 
-            # 定期批量写入以避免内存占用过大
+            # 定期把 upsert 任务交给后台写库，避免阻塞响应
             if len(operations) >= 50:
-                collection = get_document_collection(AdEntityNamesDocument)
-                await collection.bulk_write(operations, ordered=False)
-                print(f"Batch written: {len(operations)} entities")
+                batch = operations
                 operations = []
+                EntityNamesSyncService._schedule_background_write(batch)
 
-        # 批量写入剩余数据库操作
+        # 把剩余操作交给后台写库协程
         if operations:
-            collection = get_document_collection(AdEntityNamesDocument)
-            await collection.bulk_write(operations, ordered=False)
-            print(f"Final batch written: {len(operations)} entities")
+            batch = operations
+            operations = []
+            EntityNamesSyncService._schedule_background_write(batch)
 
         result = {
             "synced": synced,

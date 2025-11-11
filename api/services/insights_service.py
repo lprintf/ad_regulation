@@ -3,11 +3,10 @@ Service layer for Insights data operations.
 Encapsulates business logic for fetching and processing Facebook Ads Insights.
 """
 
+import asyncio
 import math
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Iterable, Tuple
-
-from pymongo import UpdateOne
+from typing import Any, Dict, Iterable, Literal, Tuple
 
 from facebook_business.adobjects.adreportrun import AdReportRun
 from beanie.operators import In
@@ -22,6 +21,65 @@ from utils.db import (
 )
 from utils.fb_api_flyweight_factory import get_ad_object, get_api
 from utils.insight_tool import ATOMIC_FIELDS, get_insight
+
+
+FROM_LAST_CACHE_TTL_SECONDS = 60
+_from_last_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_from_last_cache_lock = asyncio.Lock()
+
+
+def _normalize_cache_key_fields(fields: list[str] | None) -> str:
+    if not fields:
+        return ""
+    return ",".join(sorted(fields))
+
+
+def _build_from_last_cache_key(
+    *,
+    ad_account_id: str,
+    until: str,
+    level: str,
+    time_increment: int | None,
+    breakdowns: str | None,
+    fields: list[str] | None,
+    cache_window_hint: str | None,
+) -> str:
+    parts = [
+        ad_account_id.lower(),
+        until,
+        level,
+        str(time_increment) if time_increment is not None else "null",
+        breakdowns or "",
+        _normalize_cache_key_fields(fields),
+        cache_window_hint or "",
+    ]
+    return "|".join(parts)
+
+
+async def _get_from_last_cache(key: str) -> dict[str, Any] | None:
+    if not key:
+        return None
+    async with _from_last_cache_lock:
+        entry = _from_last_cache.get(key)
+        if not entry:
+            return None
+        expires_at, payload = entry
+        now = asyncio.get_running_loop().time()
+        if expires_at <= now:
+            _from_last_cache.pop(key, None)
+            return None
+        return payload
+
+
+async def _set_from_last_cache(key: str, payload: dict[str, Any]) -> None:
+    if not key:
+        return
+    ttl = FROM_LAST_CACHE_TTL_SECONDS
+    async with _from_last_cache_lock:
+        _from_last_cache[key] = (
+            asyncio.get_running_loop().time() + ttl,
+            payload,
+        )
 
 
 class InsightsService:
@@ -156,11 +214,6 @@ class InsightsService:
             field for field in requested_fields if field in non_metric_fields
         ]
 
-        requested_name_fields = {"ad_name", "adset_name", "campaign_name"}
-        should_persist_realtime_names = any(
-            field in requested_name_fields for field in requested_fields
-        )
-
         api_records: list[dict[str, Any]] = []
         if realtime_since <= until_date:
             ad_object = await get_ad_object(account_id, account_id)
@@ -179,11 +232,6 @@ class InsightsService:
 
                 df = insight_to_df(insights, extra_fields=extra_fields_for_df)
                 api_records = InsightsService._df_to_insights_list(df)
-                if should_persist_realtime_names and api_records:
-                    await InsightsService._persist_realtime_entity_names(
-                        account_id_without_prefix,
-                        api_records,
-                    )
             except Exception as exc:
                 if historical_records:
                     print(
@@ -219,6 +267,7 @@ class InsightsService:
         time_increment: int | None = None,
         breakdowns: str | None = None,
         fields: list[str] | None = None,
+        cache_window_hint: str | None = None,
     ) -> dict[str, Any]:
         """
         Fetch insights by automatically setting the realtime window to
@@ -243,6 +292,21 @@ class InsightsService:
             )
             last_synced_date = InsightsService._normalize_state_date(last_synced_source)
 
+        cache_key: str | None = None
+        if cache_window_hint:
+            cache_key = _build_from_last_cache_key(
+                ad_account_id=account_id,
+                until=until,
+                level=level,
+                time_increment=time_increment,
+                breakdowns=breakdowns,
+                fields=fields,
+                cache_window_hint=cache_window_hint,
+            )
+            cached_result = await _get_from_last_cache(cache_key)
+            if cached_result:
+                return cached_result
+
         if last_synced_date:
             realtime_since_date = last_synced_date + timedelta(days=1)
             if realtime_since_date > until_date:
@@ -258,7 +322,7 @@ class InsightsService:
                 realtime_since_date = until_date
 
         since_str = realtime_since_date.strftime("%Y-%m-%d")
-        return await InsightsService.query_insights_realtime(
+        result = await InsightsService.query_insights_realtime(
             ad_account_id=account_id,
             since=since_str,
             until=until,
@@ -267,6 +331,9 @@ class InsightsService:
             breakdowns=breakdowns,
             fields=fields,
         )
+        if cache_key:
+            await _set_from_last_cache(cache_key, result)
+        return result
 
     @staticmethod
     async def create_async_job(
@@ -549,64 +616,6 @@ class InsightsService:
         return insights_list
 
     @staticmethod
-    async def _persist_realtime_entity_names(
-        account_id: str,
-        records: list[dict[str, Any]],
-    ) -> None:
-        """
-        Upsert realtime entity names into AdEntityNamesDocument so future queries can reuse them.
-
-        Args:
-            account_id: Account ID without act_ prefix
-            records: Insight records containing optional entity names
-        """
-        if not records:
-            return
-
-        collection = get_document_collection(AdEntityNamesDocument)
-        operations: list[UpdateOne] = []
-        now = datetime.utcnow()
-
-        for record in records:
-            entity_candidates = [
-                ("ad", record.get("ad_id"), record.get("ad_name")),
-                ("adset", record.get("adset_id"), record.get("adset_name")),
-                ("campaign", record.get("campaign_id"), record.get("campaign_name")),
-            ]
-
-            for entity_type, entity_id, entity_name in entity_candidates:
-                if not entity_id or not entity_name:
-                    continue
-
-                normalized_name = str(entity_name).strip()
-                if not normalized_name:
-                    continue
-
-                operations.append(
-                    UpdateOne(
-                        {
-                            "account_id": account_id,
-                            "entity_type": entity_type,
-                            "entity_id": entity_id,
-                        },
-                        {
-                            "$set": {
-                                "account_id": account_id,
-                                "entity_type": entity_type,
-                                "entity_id": entity_id,
-                                "entity_name": normalized_name,
-                                "updated_at": now,
-                            },
-                            "$setOnInsert": {"fetched_at": now},
-                        },
-                        upsert=True,
-                    )
-                )
-
-        if operations:
-            await collection.bulk_write(operations, ordered=False)
-
-    @staticmethod
     def _parse_date(date_str: str, field_name: str) -> date:
         """
         Parse date string and return date object.
@@ -649,8 +658,8 @@ class InsightsService:
         """Convert InsightsDailyDocument to insight dictionary."""
         return {
             "ad_id": doc.ad_id,
-            "adset_id": None,  # Not populated for ad-level queries
-            "campaign_id": None,  # Not populated for ad-level queries
+            "adset_id": doc.adset_id,
+            "campaign_id": doc.campaign_id,
             "ad_name": None,  # Will be populated by _attach_entity_names
             "adset_name": None,  # Will be populated by _attach_entity_names
             "campaign_name": None,  # Will be populated by _attach_entity_names
@@ -712,57 +721,41 @@ class InsightsService:
         # Query entity names from database
         entity_names_map: Dict[Tuple[str, str], str] = {}
 
-        # Fetch ad names
-        if ad_ids and level == "ad":
-            ad_name_docs = await AdEntityNamesDocument.find(
+        async def _load_names(entity_type: Literal["ad", "adset", "campaign"], ids: set[str]) -> None:
+            if not ids:
+                return
+            docs = await AdEntityNamesDocument.find(
                 AdEntityNamesDocument.account_id == account_id,
-                AdEntityNamesDocument.entity_type == "ad",
-                In(AdEntityNamesDocument.entity_id, list(ad_ids)),
+                AdEntityNamesDocument.entity_type == entity_type,
+                In(AdEntityNamesDocument.entity_id, list(ids)),
             ).to_list()
-            for doc in ad_name_docs:
-                entity_names_map[("ad", doc.entity_id)] = doc.entity_name
+            for doc in docs:
+                entity_names_map[(entity_type, doc.entity_id)] = doc.entity_name
 
-        # Fetch adset names
-        if adset_ids and level == "adset":
-            adset_name_docs = await AdEntityNamesDocument.find(
-                AdEntityNamesDocument.account_id == account_id,
-                AdEntityNamesDocument.entity_type == "adset",
-                In(AdEntityNamesDocument.entity_id, list(adset_ids)),
-            ).to_list()
-            for doc in adset_name_docs:
-                entity_names_map[("adset", doc.entity_id)] = doc.entity_name
-
-        # Fetch campaign names
-        if campaign_ids and level == "campaign":
-            campaign_name_docs = await AdEntityNamesDocument.find(
-                AdEntityNamesDocument.account_id == account_id,
-                AdEntityNamesDocument.entity_type == "campaign",
-                In(AdEntityNamesDocument.entity_id, list(campaign_ids)),
-            ).to_list()
-            for doc in campaign_name_docs:
-                entity_names_map[("campaign", doc.entity_id)] = doc.entity_name
+        if level == "ad":
+            await _load_names("ad", ad_ids)
+            await _load_names("adset", adset_ids)
+            await _load_names("campaign", campaign_ids)
+        elif level == "adset":
+            await _load_names("adset", adset_ids)
+        elif level == "campaign":
+            await _load_names("campaign", campaign_ids)
 
         # Attach names to insights (without overwriting existing values)
         for insight in insights_list:
             if level == "ad" and insight.get("ad_id") and not insight.get("ad_name"):
                 ad_id = insight["ad_id"]
-                ad_name = entity_names_map.get(("ad", ad_id), None)
-                if ad_name:
-                    insight["ad_name"] = ad_name
-            elif level == "adset" and insight.get("adset_id") and not insight.get("adset_name"):
+                insight["ad_name"] = entity_names_map.get(("ad", ad_id), insight.get("ad_name"))
+
+            if level in {"ad", "adset"} and insight.get("adset_id") and not insight.get("adset_name"):
                 adset_id = insight["adset_id"]
-                adset_name = entity_names_map.get(("adset", adset_id), None)
-                if adset_name:
-                    insight["adset_name"] = adset_name
-            elif (
-                level == "campaign"
-                and insight.get("campaign_id")
-                and not insight.get("campaign_name")
-            ):
+                insight["adset_name"] = entity_names_map.get(("adset", adset_id), insight.get("adset_name"))
+
+            if level in {"ad", "campaign"} and insight.get("campaign_id") and not insight.get("campaign_name"):
                 campaign_id = insight["campaign_id"]
-                campaign_name = entity_names_map.get(("campaign", campaign_id), None)
-                if campaign_name:
-                    insight["campaign_name"] = campaign_name
+                insight["campaign_name"] = entity_names_map.get(
+                    ("campaign", campaign_id), insight.get("campaign_name")
+                )
 
         return insights_list
 
