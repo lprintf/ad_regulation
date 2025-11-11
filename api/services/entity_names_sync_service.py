@@ -8,9 +8,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Literal, Set
 from pymongo import UpdateOne
 
-from facebook_business.adobjects.campaign import Campaign
-from facebook_business.adobjects.adset import AdSet
-from facebook_business.adobjects.ad import Ad
 from facebook_business.exceptions import FacebookRequestError
 
 from utils.db import (
@@ -20,6 +17,14 @@ from utils.db import (
 from utils.fb_api_flyweight_factory import get_api
 
 MAX_ENTITY_NAME_BATCH_SIZE = 50
+RATE_LIMIT_ERROR_CODES = {80004}
+RATE_LIMIT_ERROR_SUBCODES = {2446079}
+
+
+def _chunk_entity_ids(entity_ids: List[str], chunk_size: int) -> List[List[str]]:
+    if chunk_size <= 0:
+        return [entity_ids]
+    return [entity_ids[i : i + chunk_size] for i in range(0, len(entity_ids), chunk_size)]
 
 
 class EntityNamesSyncService:
@@ -43,133 +48,82 @@ class EntityNamesSyncService:
         asyncio.create_task(_run(operations))
 
     @staticmethod
-    async def fetch_entity_name(
+    async def fetch_entity_names_batch(
         entity_type: Literal["campaign", "adset", "ad"],
-        entity_id: str,
+        entity_ids: List[str],
         account_id: str,
         max_retries: int = 3,
         base_delay: float = 2.0,
-    ) -> Dict[str, Any] | None:
+    ) -> tuple[Dict[str, Dict[str, Any]], bool]:
         """
-        从 Facebook API 获取单个实体的名称和状态信息。
-        实现指数退避重试机制以处理速率限制。
-
-        Args:
-            entity_type: 实体类型 (campaign, adset, ad)
-            entity_id: 实体ID
-            account_id: 广告账号ID（需要带 act_ 前缀）
-            max_retries: 最大重试次数（默认3次）
-            base_delay: 基础延迟时间（秒，默认2秒）
+        ?? Graph API ? ids ???????????
 
         Returns:
-            包含 entity_name, configured_status, effective_status 的字典
-            如果获取失败返回 None
+            (entity_id -> ????, ????????)
         """
-        last_error = None
+        if not entity_ids:
+            return {}, False
+
+        params = {
+            "ids": ",".join(entity_ids),
+            "fields": "name,configured_status,effective_status",
+        }
 
         for attempt in range(max_retries + 1):
             try:
-                # 获取 API 实例
                 api = await get_api(account_id)
+                response = api.call("GET", (), params=params)
+                payload = response.json() or {}
+                normalized: Dict[str, Dict[str, Any]] = {}
 
-                # 根据实体类型选择对应的类和字段
-                if entity_type == "campaign":
-                    entity_obj = Campaign(fbid=entity_id, api=api)
-                    fields = [
-                        Campaign.Field.name,
-                        Campaign.Field.configured_status,
-                        Campaign.Field.effective_status,
-                    ]
-                elif entity_type == "adset":
-                    entity_obj = AdSet(fbid=entity_id, api=api)
-                    fields = [
-                        AdSet.Field.name,
-                        AdSet.Field.configured_status,
-                        AdSet.Field.effective_status,
-                    ]
-                elif entity_type == "ad":
-                    entity_obj = Ad(fbid=entity_id, api=api)
-                    fields = [
-                        Ad.Field.name,
-                        Ad.Field.configured_status,
-                        Ad.Field.effective_status,
-                    ]
-                else:
-                    raise ValueError(f"Unknown entity_type: {entity_type}")
-
-                # 调用 API 获取数据
-                entity_obj.api_get(fields=fields)
-
-                # 提取字段值
-                if entity_type == "campaign":
-                    name = entity_obj.get(Campaign.Field.name, "")
-                    configured_status = entity_obj.get(
-                        Campaign.Field.configured_status, None
-                    )
-                    effective_status = entity_obj.get(
-                        Campaign.Field.effective_status, None
-                    )
-                elif entity_type == "adset":
-                    name = entity_obj.get(AdSet.Field.name, "")
-                    configured_status = entity_obj.get(
-                        AdSet.Field.configured_status, None
-                    )
-                    effective_status = entity_obj.get(AdSet.Field.effective_status, None)
-                else:  # ad
-                    name = entity_obj.get(Ad.Field.name, "")
-                    configured_status = entity_obj.get(Ad.Field.configured_status, None)
-                    effective_status = entity_obj.get(Ad.Field.effective_status, None)
-
-                return {
-                    "entity_name": name,
-                    "configured_status": configured_status,
-                    "effective_status": effective_status,
-                }
-
-            except FacebookRequestError as e:
-                last_error = e
-                error_code = e.api_error_code()
-                error_subcode = e.api_error_subcode()
-
-                # 检查是否为速率限制错误（错误代码 80004）
-                if error_code == 80004 or error_subcode == 2446079:
-                    if attempt < max_retries:
-                        # 计算指数退避延迟时间
-                        delay = base_delay * (2 ** attempt)
-                        print(
-                            f"Rate limit hit for {entity_type} {entity_id}. "
-                            f"Retry {attempt + 1}/{max_retries} after {delay}s delay. "
-                            f"Error: {str(e)}"
-                        )
-                        await asyncio.sleep(delay)
+                for entity_id, data in payload.items():
+                    if not isinstance(data, dict):
                         continue
-                    else:
-                        print(
-                            f"Rate limit exceeded for {entity_type} {entity_id} "
-                            f"after {max_retries} retries. Error: {str(e)}"
-                        )
-                        return None
-                else:
-                    # 非速率限制错误，直接返回失败
-                    print(
-                        f"Facebook API error for {entity_type} {entity_id}: "
-                        f"Code={error_code}, Subcode={error_subcode}, Message={str(e)}"
-                    )
-                    return None
+                    normalized[str(entity_id)] = {
+                        "entity_name": data.get("name", ""),
+                        "configured_status": data.get("configured_status"),
+                        "effective_status": data.get("effective_status"),
+                    }
 
-            except Exception as e:
-                last_error = e
-                print(
-                    f"Unexpected error fetching {entity_type} name for {entity_id}: "
-                    f"{type(e).__name__}: {str(e)}"
+                return normalized, False
+
+            except FacebookRequestError as exc:
+                error_code = exc.api_error_code()
+                error_subcode = exc.api_error_subcode()
+                is_rate_limited = (
+                    (error_code in RATE_LIMIT_ERROR_CODES)
+                    or (error_subcode in RATE_LIMIT_ERROR_SUBCODES)
                 )
-                import traceback
-                traceback.print_exc()
-                return None
 
-        # 如果所有重试都失败
-        print(f"All retries failed for {entity_type} {entity_id}. Last error: {last_error}")
-        return None
+                if is_rate_limited and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    print(
+                        f"Rate limit hit when fetching {len(entity_ids)} {entity_type} names. Retrying in {delay:.2f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+
+                if is_rate_limited:
+                    print(
+                        f"Rate limit exceeded when fetching {len(entity_ids)} {entity_type} names after {max_retries} retries."
+                    )
+                    return {}, True
+
+                print(
+                    f"Facebook API error fetching {entity_type} batch ({len(entity_ids)} ids): {exc.api_error_message()}"
+                )
+                return {}, False
+
+            except Exception as exc:  # pragma: no cover - defensive logging
+                print(
+                    f"Unexpected error fetching {entity_type} batch ({len(entity_ids)} ids): {type(exc).__name__}: {exc}"
+                )
+                return {}, False
+
+        print(
+            f"Failed to fetch {entity_type} batch ({len(entity_ids)} ids) after retries."
+        )
+        return {}, False
 
     @staticmethod
     async def sync_entity_names(
@@ -227,75 +181,84 @@ class EntityNamesSyncService:
         synced_entities: List[Dict[str, Any]] = []
         failed_entities: List[str] = []
 
-        print(f"Starting sync for {len(entity_ids)} {entity_type} entities in account {account_id_with_prefix}")
+        print(
+            f"Starting sync for {len(normalized_ids)} {entity_type} entities in account {account_id_with_prefix}"
+        )
 
-        for idx, entity_id in enumerate(normalized_ids, 1):
-            # 在请求之间添加延迟（除了第一个请求）
-            if idx > 1:
+        batches = _chunk_entity_ids(normalized_ids, MAX_ENTITY_NAME_BATCH_SIZE)
+
+        for batch_index, batch_ids in enumerate(batches, start=1):
+            if batch_index > 1:
                 await asyncio.sleep(batch_delay)
 
-            # 获取实体名称
-            entity_data = await EntityNamesSyncService.fetch_entity_name(
-                entity_type, entity_id, account_id_with_prefix
+            batch_data, hit_rate_limit = await EntityNamesSyncService.fetch_entity_names_batch(
+                entity_type=entity_type,
+                entity_ids=batch_ids,
+                account_id=account_id_with_prefix,
             )
 
-            if entity_data is None:
-                failed += 1
-                failed_entities.append(entity_id)
-                # 简单检测：如果连续失败可能是速率限制
-                if failed > len(entity_ids) * 0.3:  # 超过30%失败率
-                    rate_limited += 1
-                continue
+            if hit_rate_limit:
+                rate_limited += 1
+                failed += len(batch_ids)
+                failed_entities.extend(batch_ids)
+                print(
+                    f"Rate limit encountered. Stopping sync after batch {batch_index}/{len(batches)}."
+                )
+                break
 
-            # 准备 upsert 操作
-            # IMPORTANT: Include account_id in the query filter to prevent
-            # overwriting records from different accounts with the same entity_id
-            operations.append(
-                UpdateOne(
-                    {
-                        "account_id": account_id_without_prefix,
-                        "entity_type": entity_type,
-                        "entity_id": entity_id,
-                    },
-                    {
-                        "$set": {
+            for entity_id in batch_ids:
+                entity_data = batch_data.get(entity_id)
+                if not entity_data:
+                    failed += 1
+                    failed_entities.append(entity_id)
+                    continue
+
+                entity_name = (entity_data.get("entity_name") or "").strip()
+
+                operations.append(
+                    UpdateOne(
+                        {
                             "account_id": account_id_without_prefix,
                             "entity_type": entity_type,
                             "entity_id": entity_id,
-                            "entity_name": entity_data["entity_name"],
-                            "configured_status": entity_data["configured_status"],
-                            "effective_status": entity_data["effective_status"],
-                            "updated_at": datetime.utcnow(),
                         },
-                        "$setOnInsert": {"fetched_at": datetime.utcnow()},
-                    },
-                    upsert=True,
+                        {
+                            "$set": {
+                                "account_id": account_id_without_prefix,
+                                "entity_type": entity_type,
+                                "entity_id": entity_id,
+                                "entity_name": entity_name,
+                                "configured_status": entity_data.get("configured_status"),
+                                "effective_status": entity_data.get("effective_status"),
+                                "updated_at": datetime.utcnow(),
+                            },
+                            "$setOnInsert": {"fetched_at": datetime.utcnow()},
+                        },
+                        upsert=True,
+                    )
                 )
-            )
 
-            synced += 1
-            synced_entities.append(
-                {
-                    "entity_id": entity_id,
-                    "entity_name": entity_data["entity_name"],
-                    "configured_status": entity_data["configured_status"],
-                    "effective_status": entity_data["effective_status"],
-                    "entity_type": entity_type,
-                    "account_id": account_id_without_prefix,
-                }
-            )
+                synced += 1
+                synced_entities.append(
+                    {
+                        "entity_id": entity_id,
+                        "entity_name": entity_name,
+                        "configured_status": entity_data.get("configured_status"),
+                        "effective_status": entity_data.get("effective_status"),
+                        "entity_type": entity_type,
+                        "account_id": account_id_without_prefix,
+                    }
+                )
 
-            # 定期把 upsert 任务交给后台写库，避免阻塞响应
-            if len(operations) >= 50:
-                batch = operations
-                operations = []
-                EntityNamesSyncService._schedule_background_write(batch)
+                if len(operations) >= 50:
+                    batch_ops = operations
+                    operations = []
+                    EntityNamesSyncService._schedule_background_write(batch_ops)
 
-        # 把剩余操作交给后台写库协程
         if operations:
-            batch = operations
+            batch_ops = operations
             operations = []
-            EntityNamesSyncService._schedule_background_write(batch)
+            EntityNamesSyncService._schedule_background_write(batch_ops)
 
         result = {
             "synced": synced,
