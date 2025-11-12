@@ -227,7 +227,7 @@ class InsightsService:
 
         object_filter = _resolve_object_filter(object_level, object_ids)
 
-        needs_aggregation = level == "account"
+        needs_aggregation = level in {"account", "campaign", "adset"}
         fetch_level = "ad" if needs_aggregation else level
 
         should_use_historical = (
@@ -810,6 +810,11 @@ class InsightsService:
 
         for record in records:
             metrics = record.get("metrics", {})
+            configured_status = record.get("configured_status")
+            effective_status = record.get("effective_status")
+            ad_name = record.get("ad_name")
+            adset_name = record.get("adset_name")
+            campaign_name = record.get("campaign_name")
             if target_level == "account":
                 entity_value = account_id
             else:
@@ -839,6 +844,17 @@ class InsightsService:
 
             if target_level == "adset" and not bucket.get("campaign_id"):
                 bucket["campaign_id"] = record.get("campaign_id")
+            if configured_status and not bucket.get("configured_status"):
+                bucket["configured_status"] = configured_status
+            if effective_status and not bucket.get("effective_status"):
+                bucket["effective_status"] = effective_status
+            if target_level == "campaign" and campaign_name and not bucket.get("campaign_name"):
+                bucket["campaign_name"] = campaign_name
+            if target_level == "adset":
+                if adset_name and not bucket.get("adset_name"):
+                    bucket["adset_name"] = adset_name
+                if campaign_name and not bucket.get("campaign_name"):
+                    bucket["campaign_name"] = campaign_name
 
             bucket_metrics = bucket["metrics"]
             for metric_key, value in metrics.items():
