@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Modal, message, Spin } from 'antd'
+import { Modal, message } from 'antd'
 import {
   fetchInsightsData,
   syncEntityNames,
@@ -9,16 +9,6 @@ import {
 } from '../../api/insights'
 import type { InsightRecord, InsightsDataResponse } from '../../types/insights'
 import AdAccountSelect from '../../components/AdAccountSelect'
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer
-} from 'recharts'
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0
@@ -55,13 +45,141 @@ const METRIC_COLUMNS: Array<{
   }
 ]
 
+const METRIC_COLUMN_MAP = METRIC_COLUMNS.reduce<Record<MetricKey, (typeof METRIC_COLUMNS)[number]>>(
+  (acc, column) => {
+    acc[column.key] = column
+    return acc
+  },
+  {} as Record<MetricKey, (typeof METRIC_COLUMNS)[number]>
+)
+
+const MAX_TOOLTIP_POINTS = 14
+
+type MetricKey = (typeof METRIC_COLUMNS)[number]['key']
+
+const DEFAULT_VISIBLE_METRICS: MetricKey[] = [
+  'spend',
+  'impressions',
+  'reach',
+  'clicks',
+  'onsiteWebPurchase',
+  'onsiteWebPurchaseValue'
+]
+
+type HierarchyLevel = 'account' | 'campaign' | 'adset' | 'ad'
+
+const HIERARCHY_LEVELS: HierarchyLevel[] = ['account', 'campaign', 'adset', 'ad']
+
+const LEVEL_LABELS: Record<HierarchyLevel, string> = {
+  account: '广告账号',
+  campaign: '广告系列',
+  adset: '广告组',
+  ad: '广告'
+}
+
+const LEVEL_PARENT_CHAIN: Record<HierarchyLevel, HierarchyLevel[]> = {
+  account: [],
+  campaign: ['account'],
+  adset: ['campaign', 'account'],
+  ad: ['adset', 'campaign', 'account']
+}
+
 const REALTIME_ENTITY_FIELDS = [
   'ad_name',
   'adset_name',
   'campaign_name',
   'adset_id',
-  'campaign_id'
+  'campaign_id',
+  'configured_status',
+  'effective_status'
 ] as const
+
+type DerivedMetricKey = 'ctr' | 'cpc' | 'cpm' | 'cpa' | 'roas'
+
+const safeDivide = (numerator: number, denominator: number) =>
+  denominator === 0 ? 0 : numerator / denominator
+
+const DERIVED_METRICS: Array<{
+  key: DerivedMetricKey
+  label: string
+  formatter: (value: number) => string
+  compute: (metrics: Record<MetricKey, number>) => number
+}> = [
+  {
+    key: 'ctr',
+    label: 'CTR',
+    formatter: value => `${decimalFormatter.format(value * 100)}%`,
+    compute: metrics => safeDivide(metrics.clicks, metrics.impressions)
+  },
+  {
+    key: 'cpc',
+    label: 'CPC',
+    formatter: value => decimalFormatter.format(value),
+    compute: metrics => safeDivide(metrics.spend, metrics.clicks)
+  },
+  {
+    key: 'cpm',
+    label: 'CPM',
+    formatter: value => decimalFormatter.format(value),
+    compute: metrics => metrics.impressions === 0 ? 0 : (metrics.spend / metrics.impressions) * 1000
+  },
+  {
+    key: 'cpa',
+    label: '每次购买成本',
+    formatter: value => decimalFormatter.format(value),
+    compute: metrics => safeDivide(metrics.spend, metrics.onsiteWebPurchase)
+  },
+  {
+    key: 'roas',
+    label: 'ROAS',
+    formatter: value => `${decimalFormatter.format(value)}x`,
+    compute: metrics => safeDivide(metrics.onsiteWebPurchaseValue, metrics.spend)
+  }
+]
+
+const getStatusColor = (status: string | null) => {
+  if (!status) {
+    return '#d9d9d9'
+  }
+  const normalized = status.toLowerCase()
+  if (normalized.includes('active') || normalized.includes('run')) {
+    return '#52c41a'
+  }
+  if (normalized.includes('pause') || normalized.includes('suspend') || normalized.includes('limited')) {
+    return '#faad14'
+  }
+  if (normalized.includes('disable') || normalized.includes('delete') || normalized.includes('stop')) {
+    return '#ff4d4f'
+  }
+  return '#d9d9d9'
+}
+
+interface SubmittedParams {
+  accountId: string
+  since: string
+  until: string
+  source: InsightsDataQuery['source']
+  timeIncrement: number | null
+  breakdowns?: string
+}
+
+const createEmptySelectionMap = (): Record<HierarchyLevel, Set<string>> => ({
+  account: new Set<string>(),
+  campaign: new Set<string>(),
+  adset: new Set<string>(),
+  ad: new Set<string>()
+})
+
+interface AggregatedEntityRow {
+  entityId: string
+  entityName: string | null
+  dateCount: number
+  metrics: Record<MetricKey, number>
+  startDate: string
+  endDate: string
+  configuredStatus: string | null
+  effectiveStatus: string | null
+}
 
 const DATA_SOURCE_LABEL: Record<InsightsDataQuery['source'], string> = {
   database: '数据库',
@@ -84,7 +202,7 @@ const chunkArray = <T,>(items: T[], chunkSize: number): T[][] => {
 }
 
 const areQueriesEqual = (a: InsightsDataQuery, b: InsightsDataQuery) => {
-  const normalizeFields = (fields?: string[]) => (fields?.join('|') ?? '')
+  const normalizeList = (items?: string[]) => (items ? [...items].sort().join('|') : '')
   return (
     a.accountId === b.accountId &&
     a.since === b.since &&
@@ -93,7 +211,9 @@ const areQueriesEqual = (a: InsightsDataQuery, b: InsightsDataQuery) => {
     (a.timeIncrement ?? null) === (b.timeIncrement ?? null) &&
     (a.breakdowns ?? '') === (b.breakdowns ?? '') &&
     a.source === b.source &&
-    normalizeFields(a.fields) === normalizeFields(b.fields)
+    normalizeList(a.fields) === normalizeList(b.fields) &&
+    (a.objectLevel ?? null) === (b.objectLevel ?? null) &&
+    normalizeList(a.objectIds) === normalizeList(b.objectIds)
   )
 }
 
@@ -120,26 +240,91 @@ const InsightsDataPage = () => {
   const [accountInput, setAccountInput] = useState('')
   const [sinceDate, setSinceDate] = useState(defaultRange.since)
   const [untilDate, setUntilDate] = useState(defaultRange.until)
-  const [level, setLevel] = useState<'ad' | 'adset' | 'campaign'>('ad')
   const [timeIncrement, setTimeIncrement] = useState<'daily' | 'aggregate'>('daily')
   const [breakdowns, setBreakdowns] = useState('')
   const [useDatabaseSource, setUseDatabaseSource] = useState(true)
   const [useRealtimeSource, setUseRealtimeSource] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [activeLevel, setActiveLevel] = useState<HierarchyLevel>('campaign')
+  const [lastSubmittedParams, setLastSubmittedParams] = useState<SubmittedParams | null>(null)
   const [activeQuery, setActiveQuery] = useState<InsightsDataQuery | null>(null)
-  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null)
-  const [isModalOpen, setIsModalOpen] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
+  const [detailEntityId, setDetailEntityId] = useState<string | null>(null)
+  const [detailEntityName, setDetailEntityName] = useState<string | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [visibleMetricKeys, setVisibleMetricKeys] = useState<MetricKey[]>(DEFAULT_VISIBLE_METRICS)
+  const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false)
+  const [selectedEntityIds, setSelectedEntityIds] = useState<Record<HierarchyLevel, Set<string>>>(() => createEmptySelectionMap())
+  const [drillSelection, setDrillSelection] = useState<Record<HierarchyLevel, string | null>>({
+    account: null,
+    campaign: null,
+    adset: null,
+    ad: null
+  })
+
+  const resolveObjectFilter = useCallback(
+    (targetLevel: HierarchyLevel) => {
+      const parents = LEVEL_PARENT_CHAIN[targetLevel]
+      for (const parent of parents) {
+        if (parent === 'account') {
+          return null
+        }
+        const multiSelected = selectedEntityIds[parent]
+        if (multiSelected && multiSelected.size > 0) {
+          return {
+            level: parent as Exclude<HierarchyLevel, 'account'>,
+            ids: Array.from(multiSelected)
+          }
+        }
+        const drillId = drillSelection[parent]
+        if (drillId) {
+          return {
+            level: parent as Exclude<HierarchyLevel, 'account'>,
+            ids: [drillId]
+          }
+        }
+      }
+      return null
+    },
+    [selectedEntityIds, drillSelection]
+  )
+
+  const buildQueryForLevel = useCallback(
+    (targetLevel: HierarchyLevel, baseOverride?: SubmittedParams | null): InsightsDataQuery | null => {
+      const base = baseOverride ?? lastSubmittedParams
+      if (!base) {
+        return null
+      }
+      const filter = resolveObjectFilter(targetLevel)
+      const shouldRequestRealtimeFields = base.source !== 'database'
+      return {
+        accountId: base.accountId,
+        since: base.since,
+        until: base.until,
+        level: targetLevel,
+        timeIncrement: base.timeIncrement,
+        breakdowns: base.breakdowns,
+        source: base.source,
+        fields: shouldRequestRealtimeFields ? [...REALTIME_ENTITY_FIELDS] : undefined,
+        objectLevel: filter?.level,
+        objectIds: filter?.ids
+      }
+    },
+    [lastSubmittedParams, resolveObjectFilter]
+  )
 
   // The level of the currently displayed dataset.
-  const resultLevel = activeQuery?.level ?? level
+  const resultLevel = (activeQuery?.level ?? activeLevel) as HierarchyLevel
 
   // Track which queries have had their entity names synced to prevent duplicate syncing
   const syncedQueriesRef = useRef<Set<string>>(new Set())
+  const headerCheckboxRef = useRef<HTMLInputElement | null>(null)
 
   // Derive the ID column name based on level
   const idColumnName = useMemo(() => {
     switch (resultLevel) {
+      case 'account':
+        return 'Account ID'
       case 'adset':
         return 'AdSet ID'
       case 'campaign':
@@ -150,25 +335,37 @@ const InsightsDataPage = () => {
   }, [resultLevel])
 
   // Function to get the correct ID and name from a record based on level
-  const getEntityId = useCallback((record: InsightRecord) => {
-    if (resultLevel === 'adset' && record.adsetId) {
-      return record.adsetId
-    }
-    if (resultLevel === 'campaign' && record.campaignId) {
-      return record.campaignId
-    }
-    return record.adId
-  }, [resultLevel])
+  const getEntityId = useCallback(
+    (record: InsightRecord) => {
+      if (record.adId) {
+        return record.adId
+      }
+      if (record.adsetId) {
+        return record.adsetId
+      }
+      if (record.campaignId) {
+        return record.campaignId
+      }
+      return activeQuery?.accountId ?? ''
+    },
+    [activeQuery?.accountId]
+  )
 
-  const getEntityName = useCallback((record: InsightRecord): string | null => {
-    if (resultLevel === 'adset') {
-      return record.adsetName ?? null
-    }
-    if (resultLevel === 'campaign') {
-      return record.campaignName ?? null
-    }
-    return record.adName ?? null
-  }, [resultLevel])
+  const getEntityName = useCallback(
+    (record: InsightRecord): string | null => {
+      if (record.adName) {
+        return record.adName
+      }
+      if (record.adsetName) {
+        return record.adsetName
+      }
+      if (record.campaignName) {
+        return record.campaignName
+      }
+      return null
+    },
+    []
+  )
 
   const queryResult = useQuery({
     queryKey: ['insights-data', activeQuery],
@@ -207,29 +404,35 @@ const InsightsDataPage = () => {
   }, [insights])
 
   // Aggregate insights by entity ID (one row per ID)
-  const aggregatedInsights = useMemo(() => {
+  const aggregatedInsights = useMemo<AggregatedEntityRow[]>(() => {
     if (insights.length === 0) {
       return []
     }
 
-    const grouped = new Map<string, {
-      entityId: string
-      dateCount: number
-      metrics: Record<string, number>
-    }>()
+    const createMetricBucket = () =>
+      METRIC_COLUMNS.reduce<Record<MetricKey, number>>((acc, col) => {
+        acc[col.key] = 0
+        return acc
+      }, {} as Record<MetricKey, number>)
+
+    const grouped = new Map<string, AggregatedEntityRow>()
 
     for (const record of insights) {
       const entityId = getEntityId(record)
+      if (!entityId) {
+        continue
+      }
 
       if (!grouped.has(entityId)) {
-        const initialMetrics = METRIC_COLUMNS.reduce<Record<string, number>>((acc, col) => {
-          acc[col.key] = 0
-          return acc
-        }, {})
         grouped.set(entityId, {
           entityId,
+          entityName: getEntityName(record),
           dateCount: 0,
-          metrics: initialMetrics
+          metrics: createMetricBucket(),
+          startDate: record.date,
+          endDate: record.date,
+          configuredStatus: record.configuredStatus ?? null,
+          effectiveStatus: record.effectiveStatus ?? null
         })
       }
 
@@ -238,10 +441,80 @@ const InsightsDataPage = () => {
       for (const column of METRIC_COLUMNS) {
         entity.metrics[column.key] += record.metrics[column.key] ?? 0
       }
+      if (!entity.entityName) {
+        const maybeName = getEntityName(record)
+        if (maybeName) {
+          entity.entityName = maybeName
+        }
+      }
+      if (!entity.configuredStatus && record.configuredStatus) {
+        entity.configuredStatus = record.configuredStatus
+      }
+      if (!entity.effectiveStatus && record.effectiveStatus) {
+        entity.effectiveStatus = record.effectiveStatus
+      }
+      if (record.date < entity.startDate) {
+        entity.startDate = record.date
+      }
+      if (record.date > entity.endDate) {
+        entity.endDate = record.date
+      }
     }
 
     return Array.from(grouped.values()).sort((a, b) => a.entityId.localeCompare(b.entityId))
+  }, [insights, getEntityId, getEntityName])
+
+  const metricTimeline = useMemo(() => {
+    const map = new Map<string, Record<MetricKey, Array<{ date: string; value: number }>>>()
+    for (const record of insights) {
+      const entityId = getEntityId(record)
+      if (!entityId) {
+        continue
+      }
+      let entityTimeline = map.get(entityId)
+      if (!entityTimeline) {
+        entityTimeline = {} as Record<MetricKey, Array<{ date: string; value: number }>>
+        for (const column of METRIC_COLUMNS) {
+          entityTimeline[column.key] = []
+        }
+        map.set(entityId, entityTimeline)
+      }
+      for (const column of METRIC_COLUMNS) {
+        entityTimeline[column.key].push({
+          date: record.date,
+          value: record.metrics[column.key] ?? 0
+        })
+      }
+    }
+    for (const entityTimeline of map.values()) {
+      for (const column of METRIC_COLUMNS) {
+        entityTimeline[column.key].sort((a, b) => a.date.localeCompare(b.date))
+      }
+    }
+    return map
   }, [insights, getEntityId])
+
+  const formatMetricTooltip = useCallback(
+    (entityId: string, metricKey: MetricKey) => {
+      const entityTimeline = metricTimeline.get(entityId)
+      if (!entityTimeline) {
+        return ''
+      }
+      const metricSeries = entityTimeline[metricKey]
+      if (!metricSeries?.length) {
+        return ''
+      }
+      const segment = metricSeries.slice(-MAX_TOOLTIP_POINTS)
+      const formatter = METRIC_COLUMN_MAP[metricKey]?.formatter ?? (value => String(value))
+      return segment.map(entry => `${entry.date}: ${formatter(entry.value ?? 0)}`).join('\n')
+    },
+    [metricTimeline]
+  )
+
+  const visibleMetricColumns = useMemo(
+    () => METRIC_COLUMNS.filter(column => visibleMetricKeys.includes(column.key)),
+    [visibleMetricKeys]
+  )
 
   useEffect(() => {
     setCurrentPage(1)
@@ -260,6 +533,37 @@ const InsightsDataPage = () => {
     return aggregatedInsights.slice(startIndex, startIndex + TABLE_PAGE_SIZE)
   }, [aggregatedInsights, currentPage])
 
+  const currentLevelSelection = selectedEntityIds[resultLevel] ?? new Set<string>()
+  const isAllCurrentPageSelected =
+    paginatedAggregatedInsights.length > 0 &&
+    paginatedAggregatedInsights.every(entity => currentLevelSelection.has(entity.entityId))
+  const hasAnyCurrentPageSelected = paginatedAggregatedInsights.some(entity =>
+    currentLevelSelection.has(entity.entityId)
+  )
+
+  const handleSelectAllChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const { checked } = event.target
+    setSelectedEntityIds(prev => {
+      const updated: Record<HierarchyLevel, Set<string>> = {
+        account: new Set(prev.account),
+        campaign: new Set(prev.campaign),
+        adset: new Set(prev.adset),
+        ad: new Set(prev.ad)
+      }
+      updated[resultLevel] = checked
+        ? new Set(paginatedAggregatedInsights.map(entity => entity.entityId))
+        : new Set<string>()
+      return updated
+    })
+  }
+
+  useEffect(() => {
+    if (headerCheckboxRef.current) {
+      headerCheckboxRef.current.indeterminate =
+        !isAllCurrentPageSelected && hasAnyCurrentPageSelected
+    }
+  }, [isAllCurrentPageSelected, hasAnyCurrentPageSelected])
+
   const applySyncedNamesToCache = useCallback(
     (entities: SyncedEntityName[]) => {
       if (!entities.length || !activeQuery) {
@@ -268,8 +572,18 @@ const InsightsDataPage = () => {
 
       const currentQuery = activeQuery
       const queryKey = ['insights-data', currentQuery] as const
-      const nameMap = new Map<string, string | null>(
-        entities.map(item => [item.entityId, item.entityName ?? null])
+      const detailMap = new Map<
+        string,
+        { name: string | null; configuredStatus: string | null; effectiveStatus: string | null }
+      >(
+        entities.map(item => [
+          item.entityId,
+          {
+            name: item.entityName ?? null,
+            configuredStatus: item.configuredStatus ?? null,
+            effectiveStatus: item.effectiveStatus ?? null
+          }
+        ])
       )
 
       queryClient.setQueryData<InsightsDataResponse | undefined>(queryKey, previous => {
@@ -278,26 +592,35 @@ const InsightsDataPage = () => {
         }
 
         const updatedInsights = previous.insights.map(record => {
-          const entityId =
-            currentQuery.level === 'adset'
-              ? record.adsetId
-              : currentQuery.level === 'campaign'
-                ? record.campaignId
-                : record.adId
-
-          if (!entityId || !nameMap.has(entityId)) {
+          const entityId = getEntityId(record)
+          if (!entityId || !detailMap.has(entityId)) {
             return record
           }
 
-          const entityName = nameMap.get(entityId) ?? null
+          const details = detailMap.get(entityId)!
 
           if (currentQuery.level === 'adset') {
-            return { ...record, adsetName: entityName }
+            return {
+              ...record,
+              adsetName: details.name ?? record.adsetName,
+              configuredStatus: details.configuredStatus ?? record.configuredStatus,
+              effectiveStatus: details.effectiveStatus ?? record.effectiveStatus
+            }
           }
           if (currentQuery.level === 'campaign') {
-            return { ...record, campaignName: entityName }
+            return {
+              ...record,
+              campaignName: details.name ?? record.campaignName,
+              configuredStatus: details.configuredStatus ?? record.configuredStatus,
+              effectiveStatus: details.effectiveStatus ?? record.effectiveStatus
+            }
           }
-          return { ...record, adName: entityName }
+          return {
+            ...record,
+            adName: details.name ?? record.adName,
+            configuredStatus: details.configuredStatus ?? record.configuredStatus,
+            effectiveStatus: details.effectiveStatus ?? record.effectiveStatus
+          }
         })
 
         return {
@@ -314,17 +637,17 @@ const InsightsDataPage = () => {
     console.log('[Entity Sync] useEffect triggered', {
       insightsLength: insights.length,
       activeQuery,
-      level
+      level: activeQuery?.level ?? activeLevel
     })
 
     // Only run when we have insights data and an active query
-    if (!insights.length || !activeQuery) {
-      console.log('[Entity Sync] Skipping - no insights or no active query')
+    if (!insights.length || !activeQuery || activeQuery.level === 'account') {
+      console.log('[Entity Sync] Skipping - missing insights/query or unsupported level')
       return
     }
 
     // Create a unique key for this query to track if we've already synced it
-    const queryKey = `${activeQuery.accountId}-${activeQuery.level}-${activeQuery.since}-${activeQuery.until}-${activeQuery.source}`
+    const queryKey = `${activeQuery.accountId}-${activeQuery.level}-${activeQuery.since}-${activeQuery.until}-${activeQuery.source}-${activeQuery.objectLevel ?? 'none'}-${(activeQuery.objectIds ?? []).join(',')}`
     console.log('[Entity Sync] Query key:', queryKey)
 
     // Skip if we've already synced this query
@@ -359,6 +682,12 @@ const InsightsDataPage = () => {
           rateLimited: 0,
           entities: [] as SyncedEntityName[]
         }
+        const requestedEntityType =
+          activeQuery.level === 'campaign'
+            ? 'campaign'
+            : activeQuery.level === 'adset'
+              ? 'adset'
+              : 'ad'
 
         try {
           for (let idx = 0; idx < entityIdBatches.length; idx += 1) {
@@ -371,7 +700,7 @@ const InsightsDataPage = () => {
             const result = await syncEntityNames({
               adAccountId: activeQuery.accountId,
               entityIds: batchIds,
-              entityType: activeQuery.level ?? 'ad'
+              entityType: requestedEntityType
             })
 
             console.log(`[Entity Sync] Batch ${idx + 1} result:`, result)
@@ -443,17 +772,72 @@ const InsightsDataPage = () => {
     } else {
       console.log('[Entity Sync] No unnamed entities found')
     }
-  }, [insights, activeQuery, getEntityId, getEntityName, queryClient, queryResult, applySyncedNamesToCache])
+  }, [insights, activeQuery, activeLevel, getEntityId, getEntityName, queryClient, queryResult, applySyncedNamesToCache])
 
   // Get historical data for selected entity
   const selectedEntityData = useMemo(() => {
-    if (!selectedEntityId) {
+    if (!detailEntityId) {
       return []
     }
     return insights
-      .filter(record => getEntityId(record) === selectedEntityId)
+      .filter(record => getEntityId(record) === detailEntityId)
       .sort((a, b) => a.date.localeCompare(b.date))
-  }, [insights, selectedEntityId, getEntityId])
+  }, [insights, detailEntityId, getEntityId])
+
+  const selectedEntityTotals = useMemo(() => {
+    if (!selectedEntityData.length) {
+      return null
+    }
+    const totals = METRIC_COLUMNS.reduce<Record<MetricKey, number>>((acc, column) => {
+      acc[column.key] = 0
+      return acc
+    }, {} as Record<MetricKey, number>)
+
+    for (const record of selectedEntityData) {
+      for (const column of METRIC_COLUMNS) {
+        totals[column.key] += record.metrics[column.key] ?? 0
+      }
+    }
+    return totals
+  }, [selectedEntityData])
+
+  const selectedEntityDerivedSummary = useMemo(() => {
+    if (!selectedEntityTotals) {
+      return null
+    }
+    return DERIVED_METRICS.map(metric => ({
+      key: metric.key,
+      label: metric.label,
+      value: metric.compute(selectedEntityTotals),
+      formatter: metric.formatter
+    }))
+  }, [selectedEntityTotals])
+
+  const selectedEntityDailyRows = useMemo(() => {
+    if (!selectedEntityData.length) {
+      return []
+    }
+    return selectedEntityData.map(record => ({
+      date: record.date,
+      metrics: record.metrics,
+      derived: DERIVED_METRICS.map(metric => ({
+        key: metric.key,
+        value: metric.compute(record.metrics as Record<MetricKey, number>),
+        formatter: metric.formatter
+      }))
+    }))
+  }, [selectedEntityData])
+
+  const selectionBreadcrumbs = useMemo(
+    () =>
+      HIERARCHY_LEVELS.map(levelKey => {
+        if (levelKey === 'account') {
+          return `${LEVEL_LABELS[levelKey]}: ${lastSubmittedParams?.accountId ?? '—'}`
+        }
+        return `${LEVEL_LABELS[levelKey]}: ${drillSelection[levelKey] ?? '—'}`
+      }),
+    [drillSelection, lastSubmittedParams]
+  )
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -480,35 +864,123 @@ const InsightsDataPage = () => {
         : useRealtimeSource
           ? 'realtime'
           : 'database'
-    const shouldRequestRealtimeFields = dataSourceMode !== 'database'
-    setFormError(null)
-    const nextQuery: InsightsDataQuery = {
+    const submittedParams: SubmittedParams = {
       accountId: normalizedAccount,
       since: sinceDate,
       until: untilDate,
-      level,
-      timeIncrement: timeIncrement === 'daily' ? 1 : null,
-      breakdowns: breakdowns.trim() || undefined,
       source: dataSourceMode,
-      fields: shouldRequestRealtimeFields ? [...REALTIME_ENTITY_FIELDS] : undefined
+      timeIncrement: timeIncrement === 'daily' ? 1 : null,
+      breakdowns: breakdowns.trim() || undefined
+    }
+    setFormError(null)
+    setLastSubmittedParams(submittedParams)
+    setSelectedEntityIds(createEmptySelectionMap())
+    setDrillSelection({
+      account: normalizedAccount,
+      campaign: null,
+      adset: null,
+      ad: null
+    })
+    setDetailEntityId(null)
+    setDetailEntityName(null)
+    setIsModalOpen(false)
+
+    const nextQuery = buildQueryForLevel(activeLevel, submittedParams)
+    if (!nextQuery) {
+      return
     }
     const shouldRefetchSameQuery = activeQuery ? areQueriesEqual(activeQuery, nextQuery) : false
     setActiveQuery(nextQuery)
 
     if (shouldRefetchSameQuery) {
-      // Force refetch so repeated submissions with identical params still hit the API.
       void queryResult.refetch()
     }
   }
 
-  const handleRowClick = (entityId: string) => {
-    setSelectedEntityId(entityId)
+  const handleLevelChange = (nextLevel: HierarchyLevel) => {
+    setActiveLevel(nextLevel)
+    if (!lastSubmittedParams) {
+      return
+    }
+    const nextQuery = buildQueryForLevel(nextLevel)
+    if (!nextQuery) {
+      return
+    }
+    const shouldRefetchSameQuery = activeQuery ? areQueriesEqual(activeQuery, nextQuery) : false
+    setActiveQuery(nextQuery)
+    if (shouldRefetchSameQuery) {
+      void queryResult.refetch()
+    }
+  }
+
+  const handleRowFocus = (entityId: string) => {
+    setDrillSelection(prev => {
+      const updated: Record<HierarchyLevel, string | null> = { ...prev }
+      updated[resultLevel] = entityId
+      const currentIndex = HIERARCHY_LEVELS.indexOf(resultLevel)
+      for (let idx = currentIndex + 1; idx < HIERARCHY_LEVELS.length; idx += 1) {
+        updated[HIERARCHY_LEVELS[idx]] = null
+      }
+      return updated
+    })
+    setSelectedEntityIds(prev => {
+      const updated: Record<HierarchyLevel, Set<string>> = {
+        account: new Set(prev.account),
+        campaign: new Set(prev.campaign),
+        adset: new Set(prev.adset),
+        ad: new Set(prev.ad)
+      }
+      const currentIndex = HIERARCHY_LEVELS.indexOf(resultLevel)
+      for (let idx = currentIndex + 1; idx < HIERARCHY_LEVELS.length; idx += 1) {
+        updated[HIERARCHY_LEVELS[idx]] = new Set<string>()
+      }
+      return updated
+    })
+  }
+
+  const handleDetailOpen = (entityId: string, entityName: string | null) => {
+    setDetailEntityId(entityId)
+    setDetailEntityName(entityName ?? null)
     setIsModalOpen(true)
   }
 
   const handleModalClose = () => {
     setIsModalOpen(false)
-    setSelectedEntityId(null)
+    setDetailEntityId(null)
+    setDetailEntityName(null)
+  }
+
+  const toggleRowSelection = (entityId: string, checked: boolean) => {
+    setSelectedEntityIds(prev => {
+      const updated: Record<HierarchyLevel, Set<string>> = {
+        account: new Set(prev.account),
+        campaign: new Set(prev.campaign),
+        adset: new Set(prev.adset),
+        ad: new Set(prev.ad)
+      }
+      if (checked) {
+        updated[resultLevel].add(entityId)
+      } else {
+        updated[resultLevel].delete(entityId)
+      }
+      return updated
+    })
+  }
+
+  const handleMetricToggle = (metricKey: MetricKey, checked: boolean) => {
+    setVisibleMetricKeys(prev => {
+      if (checked) {
+        if (prev.includes(metricKey)) {
+          return prev
+        }
+        return [...prev, metricKey]
+      }
+      if (prev.length === 1) {
+        message.warning('至少选择一个指标列')
+        return prev
+      }
+      return prev.filter(key => key !== metricKey)
+    })
   }
 
   const isLoading = queryResult.isFetching && !queryResult.data
@@ -536,7 +1008,7 @@ const InsightsDataPage = () => {
           <div>
             <div className="card__title">筛选条件</div>
             <div className="card__subtitle">
-              选择广告账号与时间区间，可选维度级别（ad/adset/campaign）以及按日聚合。
+              选择广告账号与时间区间，查询后可在结果区域切换账号 / 广告系列 / 广告组 / 广告四级数据，并查看日级表现。
             </div>
           </div>
         </div>
@@ -573,18 +1045,6 @@ const InsightsDataPage = () => {
               value={untilDate}
               onChange={event => setUntilDate(event.target.value)}
             />
-          </label>
-          <label className="form-label" style={{ flex: '1 1 160px' }}>
-            <span>维度级别</span>
-            <select
-              className="input"
-              value={level}
-              onChange={event => setLevel(event.target.value as typeof level)}
-            >
-              <option value="ad">Ad</option>
-              <option value="adset">Ad Set</option>
-              <option value="campaign">Campaign</option>
-            </select>
           </label>
           <label className="form-label" style={{ flex: '1 1 180px' }}>
             <span>时间粒度</span>
@@ -673,6 +1133,62 @@ const InsightsDataPage = () => {
           <div className="card__body">未检索到符合条件的洞察记录。</div>
         ) : (
           <>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '1rem',
+                flexWrap: 'wrap',
+                marginBottom: '1rem'
+              }}
+            >
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {HIERARCHY_LEVELS.map(levelKey => {
+                  const isActiveTab = resultLevel === levelKey
+                  return (
+                    <button
+                      type="button"
+                      key={levelKey}
+                      className="button button--ghost"
+                      style={{
+                        padding: '0.35rem 0.9rem',
+                        borderRadius: '999px',
+                        border: isActiveTab
+                          ? '1px solid var(--color-primary, #1677ff)'
+                          : '1px solid var(--color-border, #d9d9d9)',
+                        backgroundColor: isActiveTab ? 'var(--color-primary, #1677ff)' : 'transparent',
+                        color: isActiveTab ? '#fff' : 'inherit',
+                        cursor: !lastSubmittedParams ? 'not-allowed' : 'pointer',
+                        opacity: !lastSubmittedParams && !isActiveTab ? 0.5 : 1
+                      }}
+                      onClick={() => handleLevelChange(levelKey)}
+                      disabled={!lastSubmittedParams}
+                    >
+                      {LEVEL_LABELS[levelKey]}
+                    </button>
+                  )
+                })}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  onClick={() => setIsColumnPickerOpen(true)}
+                  disabled={!lastSubmittedParams}
+                >
+                  自定义列
+                </button>
+                <span style={{ color: 'var(--color-text-muted)' }}>
+                  当前层级选中 {currentLevelSelection.size} 个
+                </span>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+              路径：{selectionBreadcrumbs.join(' / ')}
+            </div>
+
             <div className="card__body" style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: '2rem', fontWeight: 600 }}>{aggregatedInsights.length}</div>
@@ -682,7 +1198,7 @@ const InsightsDataPage = () => {
               </div>
               {totals && (
                 <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
-                  {METRIC_COLUMNS.slice(0, 4).map(column => (
+                  {(visibleMetricColumns.length ? visibleMetricColumns : METRIC_COLUMNS).slice(0, 4).map(column => (
                     <div key={column.key}>
                       <div style={{ fontSize: '1.4rem', fontWeight: 600 }}>
                         {column.formatter(totals[column.key])}
@@ -698,53 +1214,181 @@ const InsightsDataPage = () => {
               <table className="table">
                 <thead>
                   <tr>
-                    <th style={{ width: '220px' }}>{idColumnName}</th>
-                    <th style={{ width: '300px' }}>名称</th>
-                    <th style={{ width: '100px' }}>天数</th>
-                    {METRIC_COLUMNS.map(column => (
+                    <th
+                      style={{
+                        width: '56px',
+                        position: 'sticky',
+                        left: 0,
+                        zIndex: 2,
+                        background: '#fff'
+                      }}
+                    >
+                      <input
+                        ref={headerCheckboxRef}
+                        type="checkbox"
+                        checked={isAllCurrentPageSelected && paginatedAggregatedInsights.length > 0}
+                        onChange={handleSelectAllChange}
+                        disabled={!paginatedAggregatedInsights.length}
+                      />
+                    </th>
+                    <th
+                      style={{
+                        minWidth: '320px',
+                        position: 'sticky',
+                        left: 56,
+                        zIndex: 1,
+                        background: '#fff'
+                      }}
+                    >
+                      {idColumnName}
+                    </th>
+                    <th style={{ width: '180px' }}>状态</th>
+                    <th style={{ width: '180px' }}>操作</th>
+                    {visibleMetricColumns.map(column => (
                       <th key={column.key}>{column.label}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {paginatedAggregatedInsights.map(entity => {
-                    // Find a sample record to get the name
-                    const sampleRecord = insights.find(r => getEntityId(r) === entity.entityId)
-                    const entityName = sampleRecord ? getEntityName(sampleRecord) : null
-                    const nameCell = entityName ? (
-                      entityName
-                    ) : (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--color-text-muted)' }}>
-                        <Spin size="small" />
-                        <span>加载中…</span>
-                      </span>
-                    )
+                    const isActiveRow = drillSelection[resultLevel] === entity.entityId
+                    const checkboxChecked = currentLevelSelection.has(entity.entityId)
+                    const currentIndex = HIERARCHY_LEVELS.indexOf(resultLevel)
+                    const nextLevel = HIERARCHY_LEVELS[currentIndex + 1]
+                    const statusColor = getStatusColor(entity.configuredStatus)
+                    const displayName = entity.entityName ?? '名称未同步'
+                    const showAvatar = resultLevel === 'ad'
 
                     return (
                       <tr
                         key={entity.entityId}
-                        onClick={() => handleRowClick(entity.entityId)}
+                        onClick={() => handleRowFocus(entity.entityId)}
                         style={{
                           cursor: 'pointer',
-                          transition: 'background-color 0.2s'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = 'var(--color-bg-hover, #f5f5f5)'
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = 'transparent'
+                          transition: 'background-color 0.2s',
+                          backgroundColor: isActiveRow ? 'rgba(22,119,255,0.08)' : 'transparent'
                         }}
                       >
-                        <td style={{ fontFamily: 'monospace', fontSize: '0.9em' }}>
-                          {entity.entityId}
+                        <td
+                          style={{
+                            width: '56px',
+                            position: 'sticky',
+                            left: 0,
+                            zIndex: 2,
+                            background: '#fff'
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checkboxChecked}
+                            onChange={event => {
+                              event.stopPropagation()
+                              toggleRowSelection(entity.entityId, event.target.checked)
+                            }}
+                          />
                         </td>
-                        <td style={{ fontWeight: entityName ? 500 : 400, color: entityName ? 'inherit' : 'var(--color-text-muted)' }}>
-                          {nameCell}
+                        <td
+                          style={{
+                            minWidth: '320px',
+                            position: 'sticky',
+                            left: 56,
+                            zIndex: 1,
+                            background: '#fff'
+                          }}
+                          title={entity.entityId}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            {showAvatar && (
+                              <div
+                                style={{
+                                  width: 40,
+                                  height: 40,
+                                  borderRadius: 6,
+                                  background: '#f5f5f5',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontWeight: 600
+                                }}
+                              >
+                                {(displayName && displayName.charAt(0)) || entity.entityId.slice(-2)}
+                              </div>
+                            )}
+                            <div>
+                              <div
+                                style={{
+                                  fontWeight: entity.entityName ? 600 : 400,
+                                  color: entity.entityName ? 'inherit' : 'var(--color-text-muted)'
+                                }}
+                              >
+                                {displayName}
+                              </div>
+                              <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                                {entity.entityId}
+                              </div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                                覆盖 {entity.dateCount} 天（{entity.startDate} ~ {entity.endDate}）
+                              </div>
+                            </div>
+                          </div>
                         </td>
-                        <td>{entity.dateCount}</td>
-                        {METRIC_COLUMNS.map(column => (
-                          <td key={column.key}>
-                            {column.formatter(entity.metrics[column.key] ?? 0)}
+                        <td
+                          title={`数据范围：${entity.startDate} ~ ${entity.endDate}`}
+                          style={{ width: '180px' }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <span
+                              style={{
+                                width: 10,
+                                height: 10,
+                                borderRadius: '50%',
+                                backgroundColor: statusColor,
+                                display: 'inline-block'
+                              }}
+                            />
+                            <span>{entity.configuredStatus ?? '—'}</span>
+                          </div>
+                          {entity.effectiveStatus && entity.effectiveStatus !== entity.configuredStatus && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                              有效：{entity.effectiveStatus}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ width: '180px' }}>
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              className="button button--ghost"
+                              onClick={event => {
+                                event.stopPropagation()
+                                handleDetailOpen(entity.entityId, entity.entityName)
+                              }}
+                            >
+                              详情
+                            </button>
+                            {nextLevel && (
+                              <button
+                                type="button"
+                                className="button button--ghost"
+                                onClick={event => {
+                                  event.stopPropagation()
+                                  handleRowFocus(entity.entityId)
+                                  handleLevelChange(nextLevel)
+                                }}
+                              >
+                                下钻 {LEVEL_LABELS[nextLevel]}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        {visibleMetricColumns.map(column => (
+                          <td key={`${entity.entityId}-${column.key}`}>
+                            <span
+                              title={formatMetricTooltip(entity.entityId, column.key) || '暂无日度数据'}
+                              style={{ cursor: 'help' }}
+                            >
+                              {column.formatter(entity.metrics[column.key] ?? 0)}
+                            </span>
                           </td>
                         ))}
                       </tr>
@@ -807,147 +1451,160 @@ const InsightsDataPage = () => {
       </section>
 
       <Modal
-        title={`${idColumnName} 历史数据: ${selectedEntityId || ''}`}
+        title="自定义指标列"
+        open={isColumnPickerOpen}
+        onCancel={() => setIsColumnPickerOpen(false)}
+        footer={null}
+        destroyOnClose
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {METRIC_COLUMNS.map(column => {
+            const checked = visibleMetricKeys.includes(column.key)
+            return (
+              <label
+                key={column.key}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 500 }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={event => handleMetricToggle(column.key, event.target.checked)}
+                />
+                <span>{column.label}</span>
+              </label>
+            )
+          })}
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginTop: '1rem',
+            flexWrap: 'wrap',
+            gap: '0.5rem'
+          }}
+        >
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              type="button"
+              className="button button--ghost"
+              onClick={() => setVisibleMetricKeys(METRIC_COLUMNS.map(column => column.key))}
+            >
+              全部显示
+            </button>
+            <button
+              type="button"
+              className="button button--ghost"
+              onClick={() => setVisibleMetricKeys(DEFAULT_VISIBLE_METRICS)}
+            >
+              恢复默认
+            </button>
+          </div>
+          <button
+            type="button"
+            className="button button--primary"
+            onClick={() => setIsColumnPickerOpen(false)}
+          >
+            完成
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        title={
+          detailEntityName
+            ? `${detailEntityName} (${detailEntityId ?? ''})`
+            : `${idColumnName} 历史数据: ${detailEntityId ?? ''}`
+        }
         open={isModalOpen}
         onCancel={handleModalClose}
-        width={1200}
+        width={1100}
         footer={null}
       >
-        {selectedEntityData.length > 0 && (
-          <div style={{ padding: '20px 0' }}>
-            {/* Spend Trend */}
-            <div style={{ marginBottom: '40px' }}>
-              <h3 style={{ marginBottom: '16px' }}>花费趋势 (Spend)</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={selectedEntityData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip formatter={(value: number) => decimalFormatter.format(value)} />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="metrics.spend"
-                    stroke="#8884d8"
-                    name="Spend"
-                    strokeWidth={2}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+        {selectedEntityData.length === 0 ? (
+          <div style={{ color: 'var(--color-text-muted)' }}>请选择一个实体查看明细数据。</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', padding: '8px 0' }}>
+            {selectedEntityTotals && (
+              <section>
+                <h3 style={{ marginBottom: '12px' }}>基础指标汇总</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
+                  {METRIC_COLUMNS.map(column => (
+                    <div
+                      key={column.key}
+                      style={{
+                        padding: '12px',
+                        borderRadius: '8px',
+                        background: 'var(--color-bg-muted, #fafafa)',
+                        border: '1px solid var(--color-border, #f0f0f0)'
+                      }}
+                    >
+                      <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>
+                        {column.formatter(selectedEntityTotals[column.key])}
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>{column.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
-            {/* Impressions & Clicks Trend */}
-            <div style={{ marginBottom: '40px' }}>
-              <h3 style={{ marginBottom: '16px' }}>展示次数与点击量 (Impressions & Clicks)</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={selectedEntityData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip formatter={(value: number) => numberFormatter.format(value)} />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="metrics.impressions"
-                    stroke="#82ca9d"
-                    name="Impressions"
-                    strokeWidth={2}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="metrics.clicks"
-                    stroke="#ffc658"
-                    name="Clicks"
-                    strokeWidth={2}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+            {selectedEntityDerivedSummary && (
+              <section>
+                <h3 style={{ marginBottom: '12px' }}>扩展指标汇总</h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
+                  {selectedEntityDerivedSummary.map(item => (
+                    <div
+                      key={item.key}
+                      style={{
+                        padding: '12px',
+                        borderRadius: '8px',
+                        background: 'var(--color-bg-muted, #fafafa)',
+                        border: '1px solid var(--color-border, #f0f0f0)'
+                      }}
+                    >
+                      <div style={{ fontSize: '1.1rem', fontWeight: 600 }}>{item.formatter(item.value)}</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>{item.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
-            {/* Conversion Metrics Trend */}
-            <div style={{ marginBottom: '40px' }}>
-              <h3 style={{ marginBottom: '16px' }}>转化指标 (Conversions)</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={selectedEntityData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip formatter={(value: number) => numberFormatter.format(value)} />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="metrics.onsiteWebAddToCart"
-                    stroke="#ff7300"
-                    name="Add to Cart"
-                    strokeWidth={2}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="metrics.onsiteWebCheckout"
-                    stroke="#d84a4a"
-                    name="Checkout"
-                    strokeWidth={2}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="metrics.onsiteWebPurchase"
-                    stroke="#387908"
-                    name="Purchase"
-                    strokeWidth={2}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Purchase Value Trend */}
-            <div style={{ marginBottom: '20px' }}>
-              <h3 style={{ marginBottom: '16px' }}>购买价值 (Purchase Value)</h3>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={selectedEntityData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
-                  <YAxis />
-                  <Tooltip formatter={(value: number) => decimalFormatter.format(value)} />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="metrics.onsiteWebPurchaseValue"
-                    stroke="#8b4789"
-                    name="Purchase Value"
-                    strokeWidth={2}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Historical Data Table */}
-            <div style={{ marginTop: '40px' }}>
-              <h3 style={{ marginBottom: '16px' }}>历史明细数据</h3>
-              <div className="table-wrapper" style={{ maxHeight: '400px', overflow: 'auto' }}>
+            <section>
+              <h3 style={{ marginBottom: '12px' }}>每日表现</h3>
+              <div className="table-wrapper" style={{ maxHeight: '420px', overflow: 'auto' }}>
                 <table className="table">
                   <thead>
                     <tr>
                       <th style={{ width: '120px' }}>日期</th>
                       {METRIC_COLUMNS.map(column => (
-                        <th key={column.key}>{column.label}</th>
+                        <th key={`base-${column.key}`}>{column.label}</th>
+                      ))}
+                      {DERIVED_METRICS.map(metric => (
+                        <th key={`derived-${metric.key}`}>{metric.label}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {selectedEntityData.map(record => (
-                      <tr key={record.date}>
-                        <td>{record.date}</td>
+                    {selectedEntityDailyRows.map(row => (
+                      <tr key={row.date}>
+                        <td>{row.date}</td>
                         {METRIC_COLUMNS.map(column => (
-                          <td key={column.key}>
-                            {column.formatter(record.metrics[column.key] ?? 0)}
+                          <td key={`${row.date}-${column.key}`}>
+                            {column.formatter(row.metrics[column.key] ?? 0)}
                           </td>
+                        ))}
+                        {row.derived.map(metric => (
+                          <td key={`${row.date}-${metric.key}`}>{metric.formatter(metric.value)}</td>
                         ))}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            </div>
+            </section>
           </div>
         )}
       </Modal>
@@ -956,3 +1613,4 @@ const InsightsDataPage = () => {
 }
 
 export default InsightsDataPage
+

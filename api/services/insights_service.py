@@ -27,11 +27,61 @@ FROM_LAST_CACHE_TTL_SECONDS = 60
 _from_last_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _from_last_cache_lock = asyncio.Lock()
 
+OBJECT_LEVEL_TO_FIELD: dict[str, str] = {
+    "ad": "ad_id",
+    "adset": "adset_id",
+    "campaign": "campaign_id",
+}
+
 
 def _normalize_cache_key_fields(fields: list[str] | None) -> str:
     if not fields:
         return ""
     return ",".join(sorted(fields))
+
+
+def _normalize_filter_ids(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    normalized = []
+    for value in values:
+        text = str(value).strip()
+        if text:
+            normalized.append(text)
+    return normalized
+
+
+def _resolve_object_filter(
+    object_level: str | None, object_ids: list[str] | None
+) -> tuple[str, list[str]] | None:
+    if not object_level or not object_ids:
+        return None
+    field_name = OBJECT_LEVEL_TO_FIELD.get(object_level)
+    if not field_name:
+        return None
+    normalized_ids = _normalize_filter_ids(object_ids)
+    if not normalized_ids:
+        return None
+    return field_name, normalized_ids
+
+
+def _filter_insights_by_objects(
+    insights_list: list[dict[str, Any]],
+    object_level: str | None,
+    object_ids: list[str] | None,
+) -> list[dict[str, Any]]:
+    resolved = _resolve_object_filter(object_level, object_ids)
+    if not resolved:
+        return insights_list
+    field_name, normalized_ids = resolved
+    normalized_set = set(normalized_ids)
+    filtered = [
+        insight
+        for insight in insights_list
+        if str(insight.get(field_name) or "").strip() in normalized_set
+    ]
+    return filtered
+
 
 
 def _build_from_last_cache_key(
@@ -42,6 +92,8 @@ def _build_from_last_cache_key(
     time_increment: int | None,
     breakdowns: str | None,
     fields: list[str] | None,
+    object_level: str | None,
+    object_ids: list[str] | None,
     cache_window_hint: str | None,
 ) -> str:
     parts = [
@@ -51,6 +103,8 @@ def _build_from_last_cache_key(
         str(time_increment) if time_increment is not None else "null",
         breakdowns or "",
         _normalize_cache_key_fields(fields),
+        object_level or "",
+        ",".join(_normalize_filter_ids(object_ids)) if object_ids else "",
         cache_window_hint or "",
     ]
     return "|".join(parts)
@@ -129,6 +183,8 @@ class InsightsService:
         time_increment: int | None = None,
         breakdowns: str | None = None,
         fields: list[str] | None = None,
+        object_level: str | None = None,
+        object_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Query insights data by combining cached (DB) and realtime Facebook API data.
@@ -141,6 +197,8 @@ class InsightsService:
             time_increment: Time increment (1=daily, None=aggregate)
             breakdowns: Comma-separated breakdown dimensions
             fields: Additional fields requested from Facebook API (e.g., entity names)
+            object_level: Level of object_ids filter (ad, adset, campaign)
+            object_ids: Specific entity IDs to limit the query scope
 
         Returns:
             Dictionary containing insights data with metrics and metadata
@@ -161,15 +219,19 @@ class InsightsService:
             raise ValueError("since date must be on or before until date")
 
         # Validate level
-        valid_levels = ["ad", "adset", "campaign"]
+        valid_levels = ["ad", "adset", "campaign", "account"]
         if level not in valid_levels:
             raise ValueError(
                 f"Invalid level '{level}'. Must be one of: {', '.join(valid_levels)}"
             )
 
+        object_filter = _resolve_object_filter(object_level, object_ids)
+
+        needs_aggregation = level == "account"
+        fetch_level = "ad" if needs_aggregation else level
+
         should_use_historical = (
-            level == "ad"
-            and time_increment == 1
+            time_increment == 1
             and (not breakdowns or not breakdowns.strip())
         )
 
@@ -183,17 +245,18 @@ class InsightsService:
             historical_until = min(until_date, realtime_cutoff)
 
             if since_date <= historical_until:
-                # Query database using account_id without act_ prefix
-                docs = await InsightsDailyDocument.find(
-                    InsightsDailyDocument.account_id == account_id_without_prefix,
-                    InsightsDailyDocument.date_start
-                    >= datetime.combine(since_date, datetime.min.time()),
-                    InsightsDailyDocument.date_start
-                    <= datetime.combine(historical_until, datetime.min.time()),
-                ).to_list()
+                historical_payload = await InsightsService.query_insights_from_db(
+                    ad_account_id=account_id,
+                    since=since_date.strftime("%Y-%m-%d"),
+                    until=historical_until.strftime("%Y-%m-%d"),
+                    level=level,
+                    time_increment=time_increment,
+                    breakdowns=breakdowns,
+                    object_level=object_level,
+                    object_ids=object_ids,
+                )
 
-                for doc in docs:
-                    insight_record = InsightsService._document_to_insight(doc)
+                for insight_record in historical_payload["insights"]:
                     historical_records[
                         InsightsService._key_for_insight(insight_record)
                     ] = insight_record
@@ -202,16 +265,23 @@ class InsightsService:
 
         requested_fields = fields or []
         base_fields = ["ad_id", *ATOMIC_FIELDS]
-        api_fields: list[str] = list(dict.fromkeys(base_fields + requested_fields))
+        required_fields = []
+        if fetch_level == "ad":
+            required_fields.extend(["adset_id", "campaign_id"])
+        api_fields: list[str] = list(
+            dict.fromkeys(base_fields + requested_fields + required_fields)
+        )
         non_metric_fields = {
             "adset_id",
             "campaign_id",
             "ad_name",
             "adset_name",
             "campaign_name",
+            "configured_status",
+            "effective_status",
         }
         extra_fields_for_df = [
-            field for field in requested_fields if field in non_metric_fields
+            field for field in api_fields if field in non_metric_fields
         ]
 
         api_records: list[dict[str, Any]] = []
@@ -222,7 +292,7 @@ class InsightsService:
                 insights = get_insight(
                     adobject=ad_object,
                     fields=api_fields,
-                    level=level,
+                    level=fetch_level,
                     since=realtime_since.strftime("%Y-%m-%d"),
                     until=until_date.strftime("%Y-%m-%d"),
                     time_increment=time_increment,
@@ -232,6 +302,12 @@ class InsightsService:
 
                 df = insight_to_df(insights, extra_fields=extra_fields_for_df)
                 api_records = InsightsService._df_to_insights_list(df)
+                if needs_aggregation:
+                    api_records = InsightsService._aggregate_records_for_level(
+                        api_records,
+                        target_level=level,
+                        account_id=account_id_without_prefix,
+                    )
             except Exception as exc:
                 if historical_records:
                     print(
@@ -247,6 +323,12 @@ class InsightsService:
         insights_list = sorted(
             combined.values(),
             key=lambda item: (item["date"], item["ad_id"]),
+        )
+
+        insights_list = _filter_insights_by_objects(
+            insights_list,
+            object_level,
+            object_ids,
         )
 
         insights_list = await InsightsService._attach_entity_names(
@@ -267,6 +349,8 @@ class InsightsService:
         time_increment: int | None = None,
         breakdowns: str | None = None,
         fields: list[str] | None = None,
+        object_level: str | None = None,
+        object_ids: list[str] | None = None,
         cache_window_hint: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -301,6 +385,8 @@ class InsightsService:
                 time_increment=time_increment,
                 breakdowns=breakdowns,
                 fields=fields,
+                object_level=object_level,
+                object_ids=object_ids,
                 cache_window_hint=cache_window_hint,
             )
             cached_result = await _get_from_last_cache(cache_key)
@@ -330,6 +416,8 @@ class InsightsService:
             time_increment=time_increment,
             breakdowns=breakdowns,
             fields=fields,
+            object_level=object_level,
+            object_ids=object_ids,
         )
         if cache_key:
             await _set_from_last_cache(cache_key, result)
@@ -374,7 +462,7 @@ class InsightsService:
         InsightsService._validate_date(until, "until date")
 
         # Validate level
-        valid_levels = ["ad", "adset", "campaign"]
+        valid_levels = ["account", "campaign", "adset", "ad"]
         if level not in valid_levels:
             raise ValueError(
                 f"Invalid level '{level}'. Must be one of: {', '.join(valid_levels)}"
@@ -558,6 +646,8 @@ class InsightsService:
         has_ad_name = "ad_name" in columns
         has_adset_name = "adset_name" in columns
         has_campaign_name = "campaign_name" in columns
+        has_configured_status = "configured_status" in columns
+        has_effective_status = "effective_status" in columns
 
         def _normalize_optional(value: Any) -> str | None:
             if value is None:
@@ -575,6 +665,8 @@ class InsightsService:
                 "ad_name": None,
                 "adset_name": None,
                 "campaign_name": None,
+                "configured_status": None,
+                "effective_status": None,
                 "date": str(row["date_start"]),
                 "metrics": {
                     "spend": float(row["spend"]),
@@ -610,6 +702,14 @@ class InsightsService:
             if has_campaign_name:
                 insight_record["campaign_name"] = _normalize_optional(
                     row["campaign_name"]
+                )
+            if has_configured_status:
+                insight_record["configured_status"] = _normalize_optional(
+                    row["configured_status"]
+                )
+            if has_effective_status:
+                insight_record["effective_status"] = _normalize_optional(
+                    row["effective_status"]
                 )
 
             insights_list.append(insight_record)
@@ -663,6 +763,8 @@ class InsightsService:
             "ad_name": None,  # Will be populated by _attach_entity_names
             "adset_name": None,  # Will be populated by _attach_entity_names
             "campaign_name": None,  # Will be populated by _attach_entity_names
+            "configured_status": None,
+            "effective_status": None,
             "date": doc.date_start.strftime("%Y-%m-%d"),
             "metrics": {
                 "spend": float(doc.spend),
@@ -685,6 +787,69 @@ class InsightsService:
     def _key_for_insight(insight: dict[str, Any]) -> Tuple[str, str]:
         """Generate unique key for an insight record (ad_id, date)."""
         return (insight["ad_id"], insight["date"])
+
+    @staticmethod
+    def _aggregate_records_for_level(
+        records: list[dict[str, Any]],
+        target_level: str,
+        account_id: str,
+    ) -> list[dict[str, Any]]:
+        if target_level not in {"account", "campaign", "adset"}:
+            return records
+        if not records:
+            return records
+
+        group_field_map = {
+            "account": None,
+            "campaign": "campaign_id",
+            "adset": "adset_id",
+        }
+        group_field = group_field_map[target_level]
+
+        aggregated: Dict[Tuple[str, str], dict[str, Any]] = {}
+
+        for record in records:
+            metrics = record.get("metrics", {})
+            if target_level == "account":
+                entity_value = account_id
+            else:
+                entity_value = record.get(group_field) if group_field else None
+            if not entity_value:
+                continue
+
+            key = (str(entity_value), record["date"])
+            bucket = aggregated.get(key)
+            if not bucket:
+                metric_template = {metric_key: 0 for metric_key in metrics.keys()}
+                bucket = {
+                    "ad_id": str(entity_value),
+                    "adset_id": str(entity_value) if target_level == "adset" else None,
+                    "campaign_id": str(entity_value)
+                    if target_level == "campaign"
+                    else (record.get("campaign_id") if target_level == "adset" else None),
+                    "ad_name": None,
+                    "adset_name": None,
+                    "campaign_name": None,
+                    "configured_status": None,
+                    "effective_status": None,
+                    "date": record["date"],
+                    "metrics": metric_template,
+                }
+                aggregated[key] = bucket
+
+            if target_level == "adset" and not bucket.get("campaign_id"):
+                bucket["campaign_id"] = record.get("campaign_id")
+
+            bucket_metrics = bucket["metrics"]
+            for metric_key, value in metrics.items():
+                if metric_key not in bucket_metrics:
+                    bucket_metrics[metric_key] = 0
+                bucket_metrics[metric_key] += value or 0
+
+        return sorted(
+            aggregated.values(),
+            key=lambda item: (item["date"], item["ad_id"]),
+        )
 
     @staticmethod
     async def _attach_entity_names(
@@ -719,9 +884,11 @@ class InsightsService:
 
 
         # Query entity names from database
-        entity_names_map: Dict[Tuple[str, str], str] = {}
+        entity_details_map: Dict[Tuple[str, str], dict[str, Any]] = {}
 
-        async def _load_names(entity_type: Literal["ad", "adset", "campaign"], ids: set[str]) -> None:
+        async def _load_names(
+            entity_type: Literal["ad", "adset", "campaign"], ids: set[str]
+        ) -> None:
             if not ids:
                 return
             docs = await AdEntityNamesDocument.find(
@@ -730,7 +897,11 @@ class InsightsService:
                 In(AdEntityNamesDocument.entity_id, list(ids)),
             ).to_list()
             for doc in docs:
-                entity_names_map[(entity_type, doc.entity_id)] = doc.entity_name
+                entity_details_map[(entity_type, doc.entity_id)] = {
+                    "name": doc.entity_name,
+                    "configured_status": doc.configured_status,
+                    "effective_status": doc.effective_status,
+                }
 
         if level == "ad":
             await _load_names("ad", ad_ids)
@@ -743,19 +914,38 @@ class InsightsService:
 
         # Attach names to insights (without overwriting existing values)
         for insight in insights_list:
-            if level == "ad" and insight.get("ad_id") and not insight.get("ad_name"):
+            if level == "ad" and insight.get("ad_id"):
                 ad_id = insight["ad_id"]
-                insight["ad_name"] = entity_names_map.get(("ad", ad_id), insight.get("ad_name"))
+                details = entity_details_map.get(("ad", ad_id))
+                if details:
+                    if not insight.get("ad_name"):
+                        insight["ad_name"] = details.get("name") or insight.get("ad_name")
+                    if not insight.get("configured_status"):
+                        insight["configured_status"] = details.get("configured_status")
+                    if not insight.get("effective_status"):
+                        insight["effective_status"] = details.get("effective_status")
 
-            if level in {"ad", "adset"} and insight.get("adset_id") and not insight.get("adset_name"):
+            if level in {"ad", "adset"} and insight.get("adset_id"):
                 adset_id = insight["adset_id"]
-                insight["adset_name"] = entity_names_map.get(("adset", adset_id), insight.get("adset_name"))
+                details = entity_details_map.get(("adset", adset_id))
+                if details:
+                    if not insight.get("adset_name"):
+                        insight["adset_name"] = details.get("name") or insight.get("adset_name")
+                    if level == "adset" and not insight.get("configured_status"):
+                        insight["configured_status"] = details.get("configured_status")
+                    if level == "adset" and not insight.get("effective_status"):
+                        insight["effective_status"] = details.get("effective_status")
 
-            if level in {"ad", "campaign"} and insight.get("campaign_id") and not insight.get("campaign_name"):
+            if level in {"ad", "campaign"} and insight.get("campaign_id"):
                 campaign_id = insight["campaign_id"]
-                insight["campaign_name"] = entity_names_map.get(
-                    ("campaign", campaign_id), insight.get("campaign_name")
-                )
+                details = entity_details_map.get(("campaign", campaign_id))
+                if details:
+                    if not insight.get("campaign_name"):
+                        insight["campaign_name"] = details.get("name") or insight.get("campaign_name")
+                    if level == "campaign" and not insight.get("configured_status"):
+                        insight["configured_status"] = details.get("configured_status")
+                    if level == "campaign" and not insight.get("effective_status"):
+                        insight["effective_status"] = details.get("effective_status")
 
         return insights_list
 
@@ -767,6 +957,8 @@ class InsightsService:
         level: str = "ad",
         time_increment: int | None = None,
         breakdowns: str | None = None,
+        object_level: str | None = None,
+        object_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """
         Query insights data from MongoDB database only (no Facebook API calls).
@@ -776,9 +968,11 @@ class InsightsService:
             ad_account_id: Ad account ID (with or without act_ prefix)
             since: Start date in YYYY-MM-DD format
             until: End date in YYYY-MM-DD format
-            level: Aggregation level (ad, adset, or campaign) - currently only 'ad' is supported
-            time_increment: Time increment (1=daily, None=aggregate) - currently only daily is supported
-            breakdowns: Comma-separated breakdown dimensions - currently not supported
+            level: Aggregation level (account, campaign, adset, or ad)
+        time_increment: Time increment (1=daily, None=aggregate) - currently only daily is supported
+        breakdowns: Comma-separated breakdown dimensions - currently not supported
+        object_level: Optional parent level for filtering (ad, adset, campaign)
+        object_ids: Optional list of entity IDs to limit the query scope
 
         Returns:
             Dictionary containing insights data with metrics and metadata
@@ -799,7 +993,7 @@ class InsightsService:
             raise ValueError("since date must be on or before until date")
 
         # Validate parameters
-        valid_levels = ["ad", "adset", "campaign"]
+        valid_levels = ["account", "campaign", "adset", "ad"]
         if level not in valid_levels:
             raise ValueError(
                 f"Invalid level '{level}'. Must be one of: {', '.join(valid_levels)}"
@@ -813,16 +1007,24 @@ class InsightsService:
                 f"Database query currently does not support breakdowns, got '{breakdowns}'"
             )
 
+        object_filter = _resolve_object_filter(object_level, object_ids)
+
         # Query database based on level
         if level == "ad":
             # Ad-level: direct query, no aggregation needed
-            docs = await InsightsDailyDocument.find(
+            date_lower = datetime.combine(since_date, datetime.min.time())
+            date_upper = datetime.combine(until_date, datetime.min.time())
+            filters = [
                 InsightsDailyDocument.account_id == account_id_without_prefix,
-                InsightsDailyDocument.date_start
-                >= datetime.combine(since_date, datetime.min.time()),
-                InsightsDailyDocument.date_start
-                <= datetime.combine(until_date, datetime.min.time()),
-            ).to_list()
+                InsightsDailyDocument.date_start >= date_lower,
+                InsightsDailyDocument.date_start <= date_upper,
+            ]
+            if object_filter:
+                field_name, normalized_ids = object_filter
+                field = getattr(InsightsDailyDocument, field_name)
+                filters.append(In(field, normalized_ids))
+
+            docs = await InsightsDailyDocument.find(*filters).to_list()
 
             # Convert documents to insights list
             insights_list = [
@@ -835,18 +1037,30 @@ class InsightsService:
             collection = get_document_collection(InsightsDailyDocument)
 
             # Determine group field based on level
-            group_field = "campaign_id" if level == "campaign" else "adset_id"
+            if level == "campaign":
+                group_field = "campaign_id"
+            elif level == "adset":
+                group_field = "adset_id"
+            else:
+                group_field = "account_id"
+
+            date_lower = datetime.combine(since_date, datetime.min.time())
+            date_upper = datetime.combine(until_date, datetime.min.time())
+            match_stage: dict[str, Any] = {
+                "account_id": account_id_without_prefix,
+                "date_start": {
+                    "$gte": date_lower,
+                    "$lte": date_upper,
+                },
+            }
+            if object_filter:
+                field_name, normalized_ids = object_filter
+                match_stage[field_name] = {"$in": normalized_ids}
 
             # Build aggregation pipeline
             pipeline = [
                 {
-                    "$match": {
-                        "account_id": account_id_without_prefix,
-                        "date_start": {
-                            "$gte": datetime.combine(since_date, datetime.min.time()),
-                            "$lte": datetime.combine(until_date, datetime.min.time()),
-                        },
-                    }
+                    "$match": match_stage
                 },
                 {
                     "$group": {
@@ -872,7 +1086,7 @@ class InsightsService:
                 {
                     "$project": {
                         "_id": 0,
-                        "entity_id": f"$_id.{group_field}",
+                        "ad_id": f"$_id.{group_field}",
                         "date_start": "$_id.date_start",
                         "spend": 1,
                         "impressions": 1,
@@ -889,21 +1103,27 @@ class InsightsService:
                         "onsite_web_purchase_value": 1,
                     }
                 },
-                {"$sort": {"date_start": 1, "entity_id": 1}},
+                {"$sort": {"date_start": 1, "ad_id": 1}},
             ]
 
             # Execute aggregation using Beanie's aggregate method
             results = await InsightsDailyDocument.aggregate(pipeline).to_list()
 
             # Convert aggregation results to insights list
-            insights_list = [
-                {
-                    "ad_id": str(result["entity_id"]),  # Still use ad_id for backward compatibility
-                    "adset_id": str(result["entity_id"]) if level == "adset" else None,
-                    "campaign_id": str(result["entity_id"]) if level == "campaign" else None,
-                    "ad_name": None,  # Will be populated by _attach_entity_names
-                    "adset_name": None,  # Will be populated by _attach_entity_names
-                    "campaign_name": None,  # Will be populated by _attach_entity_names
+            insights_list = []
+            for result in results:
+                entity_value = result.get("ad_id")
+                if not entity_value:
+                    continue
+                record: dict[str, Any] = {
+                    "ad_id": str(entity_value),
+                    "adset_id": str(entity_value) if level == "adset" else None,
+                    "campaign_id": str(entity_value) if level == "campaign" else None,
+                    "ad_name": None,
+                    "adset_name": None,
+                    "campaign_name": None,
+                    "configured_status": None,
+                    "effective_status": None,
                     "date": result["date_start"].strftime("%Y-%m-%d"),
                     "metrics": {
                         "spend": float(result["spend"]),
@@ -921,13 +1141,18 @@ class InsightsService:
                         "onsite_web_purchase_value": float(result["onsite_web_purchase_value"]),
                     },
                 }
-                for result in results
-            ]
+                insights_list.append(record)
 
         # Sort by date and ad_id
         insights_list = sorted(
             insights_list,
             key=lambda item: (item["date"], item["ad_id"]),
+        )
+
+        insights_list = _filter_insights_by_objects(
+            insights_list,
+            object_level,
+            object_ids,
         )
 
         # Fetch entity names from database and attach to insights

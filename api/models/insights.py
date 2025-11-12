@@ -4,7 +4,7 @@ Request and response models for Insights endpoints.
 
 import re
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -60,6 +60,12 @@ class InsightRecord(BaseModel):
     campaign_name: str | None = Field(
         None, description="Campaign name (populated when level=campaign, if available)"
     )
+    configured_status: str | None = Field(
+        None, description="Configured status for the entity at the requested level"
+    )
+    effective_status: str | None = Field(
+        None, description="Effective status for the entity at the requested level"
+    )
     date: str = Field(..., description="Date of the insight (YYYY-MM-DD or datetime)")
     metrics: InsightMetrics = Field(..., description="Insight metrics")
 
@@ -100,6 +106,16 @@ class InsightsRequest(BaseModel):
         default=None,
         description="Comma-separated breakdown dimensions (e.g., 'country', 'hourly_stats_aggregated_by_advertiser_time_zone')",
         examples=["country", "hourly_stats_aggregated_by_advertiser_time_zone"],
+    )
+    object_ids: list[str] | None = Field(
+        default=None,
+        description="Optional entity IDs to filter within the selected account",
+        examples=[["123", "456"]],
+    )
+    object_level: Literal["ad", "adset", "campaign"] | None = Field(
+        default=None,
+        alias="obj_level",
+        description="Level of the provided object_ids (ad, adset, or campaign)",
     )
 
 
@@ -143,6 +159,16 @@ class InsightsFromLastRequest(BaseModel):
     fields: list[str] | None = Field(
         default=None,
         description="Additional fields to request from Facebook (e.g., ['ad_name','adset_name'])",
+    )
+    object_ids: list[str] | None = Field(
+        default=None,
+        description="Optional entity IDs to limit realtime backfill scope",
+        examples=[["123", "456"]],
+    )
+    object_level: Literal["ad", "adset", "campaign"] | None = Field(
+        default=None,
+        alias="obj_level",
+        description="Level of the provided object_ids (ad, adset, or campaign)",
     )
     cache_window_hint: str | None = Field(
         default=None,

@@ -83,6 +83,21 @@ async def query_insights_from_database(
             examples=[""],
         ),
     ] = None,
+    object_ids: Annotated[
+        list[str] | None,
+        Query(
+            description="Optional entity IDs to filter within the selected account",
+            examples=[["123", "456"]],
+        ),
+    ] = None,
+    object_level: Annotated[
+        str | None,
+        Query(
+            alias="obj_level",
+            description="Level for the provided object_ids (ad, adset, campaign)",
+            examples=["campaign"],
+        ),
+    ] = None,
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsResponse]:
     """
@@ -128,6 +143,8 @@ async def query_insights_from_database(
             level=level,
             time_increment=time_increment,
             breakdowns=breakdowns,
+            object_level=object_level,
+            object_ids=object_ids,
         )
 
         insights_data = InsightsResponse(
@@ -204,6 +221,8 @@ async def query_insights_realtime(
             time_increment=request.time_increment,
             breakdowns=request.breakdowns,
             fields=request.fields,
+            object_level=request.object_level,
+            object_ids=request.object_ids,
         )
 
         insights_data = InsightsResponse(
@@ -215,6 +234,8 @@ async def query_insights_realtime(
                     ad_name=insight.get("ad_name"),
                     adset_name=insight.get("adset_name"),
                     campaign_name=insight.get("campaign_name"),
+                    configured_status=insight.get("configured_status"),
+                    effective_status=insight.get("effective_status"),
                     date=insight["date"],
                     metrics=insight["metrics"],
                 )
@@ -256,6 +277,8 @@ async def _execute_query_from_last(
             time_increment=request.time_increment,
             breakdowns=request.breakdowns,
             fields=request.fields,
+            object_level=request.object_level,
+            object_ids=request.object_ids,
             cache_window_hint=request.cache_window_hint,
         )
 
@@ -268,6 +291,8 @@ async def _execute_query_from_last(
                     ad_name=insight.get("ad_name"),
                     adset_name=insight.get("adset_name"),
                     campaign_name=insight.get("campaign_name"),
+                    configured_status=insight.get("configured_status"),
+                    effective_status=insight.get("effective_status"),
                     date=insight["date"],
                     metrics=insight["metrics"],
                 )
@@ -618,6 +643,8 @@ async def get_job_result(
                     ad_name=insight.get("ad_name"),
                     adset_name=insight.get("adset_name"),
                     campaign_name=insight.get("campaign_name"),
+                    configured_status=insight.get("configured_status"),
+                    effective_status=insight.get("effective_status"),
                     date=insight["date"],
                     metrics=insight["metrics"],
                 )

@@ -169,6 +169,9 @@ class InsightsDailyDocument(Document):
             IndexModel([("account_id", 1), ("date_start", 1)]),
             IndexModel([("campaign_id", 1), ("date_start", 1)]),
             IndexModel([("adset_id", 1), ("date_start", 1)]),
+            IndexModel([("account_id", 1), ("campaign_id", 1), ("date_start", 1)]),
+            IndexModel([("account_id", 1), ("adset_id", 1), ("date_start", 1)]),
+            IndexModel([("account_id", 1), ("ad_id", 1), ("date_start", 1)]),
         ]
 
 

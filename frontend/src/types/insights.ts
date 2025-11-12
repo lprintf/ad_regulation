@@ -57,6 +57,8 @@ export interface InsightRecord {
   adName?: string | null // Ad name (if available)
   adsetName?: string | null // AdSet name (populated when level=adset, if available)
   campaignName?: string | null // Campaign name (populated when level=campaign, if available)
+  configuredStatus?: string | null // Configured status for the entity at the requested level
+  effectiveStatus?: string | null // Effective status for the entity at the requested level
   date: string
   metrics: InsightMetrics
 }
@@ -69,6 +71,3 @@ export interface InsightsDataResponse {
     until: string
   }
 }
-
-
-

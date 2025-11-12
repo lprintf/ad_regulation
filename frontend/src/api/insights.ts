@@ -44,6 +44,8 @@ const mapInsightRecordFromApi = (item: any): InsightRecord => {
     adName: item?.ad_name ?? item?.adName ?? null,
     adsetName: item?.adset_name ?? item?.adsetName ?? null,
     campaignName: item?.campaign_name ?? item?.campaignName ?? null,
+    configuredStatus: item?.configured_status ?? item?.configuredStatus ?? null,
+    effectiveStatus: item?.effective_status ?? item?.effectiveStatus ?? null,
     date: item?.date ?? item?.date_start ?? item?.dateStart ?? '',
     metrics: {
       spend: Number(metrics?.spend ?? item?.spend ?? 0),
@@ -102,11 +104,13 @@ export interface InsightsDataQuery {
   accountId: string
   since: string
   until: string
-  level?: 'ad' | 'adset' | 'campaign'
+  level?: 'account' | 'campaign' | 'adset' | 'ad'
   timeIncrement?: number | null
   breakdowns?: string
   source: InsightsDataSource
   fields?: string[]
+  objectLevel?: 'ad' | 'adset' | 'campaign'
+  objectIds?: string[]
 }
 
 const mapApiResponse = (
@@ -158,6 +162,12 @@ const buildDbParams = (params: InsightsDataQuery) => {
   if (params.breakdowns) {
     queryParams.breakdowns = params.breakdowns
   }
+  if (params.objectIds?.length) {
+    queryParams.object_ids = params.objectIds
+  }
+  if (params.objectLevel) {
+    queryParams.obj_level = params.objectLevel
+  }
   return queryParams
 }
 
@@ -177,6 +187,12 @@ const buildRealtimePayload = (params: InsightsDataQuery) => {
   if (params.fields?.length) {
     payload.fields = params.fields
   }
+  if (params.objectIds?.length) {
+    payload.object_ids = params.objectIds
+  }
+  if (params.objectLevel) {
+    payload.obj_level = params.objectLevel
+  }
   return payload
 }
 
@@ -195,6 +211,12 @@ const buildFromLastParams = (params: InsightsDataQuery) => {
   }
   if (params.fields?.length) {
     payload.fields = params.fields.join(',')
+  }
+  if (params.objectIds?.length) {
+    payload.object_ids = params.objectIds
+  }
+  if (params.objectLevel) {
+    payload.obj_level = params.objectLevel
   }
   return payload
 }
