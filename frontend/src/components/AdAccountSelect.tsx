@@ -14,6 +14,7 @@ interface AdAccountSelectProps extends InputProps {
   className?: string
   inputClassName?: string
   showSelectedName?: boolean
+  onAccountDetailsChange?: (details: { id: string; name: string | null } | null) => void
 }
 
 const ensureActPrefix = (value: string): string => {
@@ -34,6 +35,7 @@ const AdAccountSelect = ({
   className,
   inputClassName = 'input',
   showSelectedName = true,
+  onAccountDetailsChange,
   ...inputProps
 }: AdAccountSelectProps) => {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -115,6 +117,17 @@ const AdAccountSelect = ({
   }, [fuzzyMatches.length, trimmedValue])
 
   useEffect(() => {
+    if (!showSelectedName) {
+      return
+    }
+    if (selectedAccount) {
+      onAccountDetailsChange?.({ id: selectedAccount.id, name: selectedAccount.name ?? null })
+    } else if (!trimmedValue) {
+      onAccountDetailsChange?.(null)
+    }
+  }, [selectedAccount, showSelectedName, trimmedValue, onAccountDetailsChange])
+
+  useEffect(() => {
     const listenerOptions: AddEventListenerOptions = { capture: true }
     const handlePointerDown = (event: PointerEvent) => {
       if (!containerRef.current) {
@@ -170,6 +183,7 @@ const AdAccountSelect = ({
 
   const handleSelect = (account: AdAccount) => {
     onChange(account.id)
+    onAccountDetailsChange?.({ id: account.id, name: account.name ?? null })
     setIsOpen(false)
   }
 
@@ -231,7 +245,10 @@ const AdAccountSelect = ({
           <button
             type="button"
             className="button button--ghost"
-            onClick={() => onChange('')}
+            onClick={() => {
+              onChange('')
+              onAccountDetailsChange?.(null)
+            }}
             disabled={inputProps.disabled}
             style={{ padding: '0.35rem 0.75rem', whiteSpace: 'nowrap' }}
           >

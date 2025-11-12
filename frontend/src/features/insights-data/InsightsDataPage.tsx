@@ -1,6 +1,6 @@
-import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
+import { useMemo, useState, useEffect, useRef, useCallback, useContext } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Modal, message } from 'antd'
+import { Modal, message, ConfigProvider } from 'antd'
 import {
   fetchInsightsData,
   syncEntityNames,
@@ -65,6 +65,48 @@ const DEFAULT_VISIBLE_METRICS: MetricKey[] = [
   'onsiteWebPurchase',
   'onsiteWebPurchaseValue'
 ]
+
+const DEFAULT_COLUMN_ORDER: MetricKey[] = METRIC_COLUMNS.map(column => column.key)
+
+const isMetricKey = (value: string): value is MetricKey =>
+  METRIC_COLUMNS.some(column => column.key === value)
+
+const sanitizeColumnOrder = (order: unknown): MetricKey[] => {
+  if (!Array.isArray(order)) {
+    return [...DEFAULT_COLUMN_ORDER]
+  }
+  const normalized: MetricKey[] = []
+  for (const item of order) {
+    if (typeof item !== 'string') {
+      continue
+    }
+    if (isMetricKey(item) && !normalized.includes(item)) {
+      normalized.push(item)
+    }
+  }
+  for (const key of DEFAULT_COLUMN_ORDER) {
+    if (!normalized.includes(key)) {
+      normalized.push(key)
+    }
+  }
+  return normalized
+}
+
+const sanitizeVisibleMetrics = (keys: unknown, fallback: MetricKey[]): MetricKey[] => {
+  if (!Array.isArray(keys)) {
+    return [...fallback]
+  }
+  const normalized: MetricKey[] = []
+  for (const item of keys) {
+    if (typeof item !== 'string') {
+      continue
+    }
+    if (isMetricKey(item) && !normalized.includes(item)) {
+      normalized.push(item)
+    }
+  }
+  return normalized.length > 0 ? normalized : [...fallback]
+}
 
 type HierarchyLevel = 'account' | 'campaign' | 'adset' | 'ad'
 
@@ -245,6 +287,8 @@ const InsightsDataPage = () => {
   const [useDatabaseSource, setUseDatabaseSource] = useState(true)
   const [useRealtimeSource, setUseRealtimeSource] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [selectedAccountName, setSelectedAccountName] = useState<string | null>(null)
+  const [submittedAccountName, setSubmittedAccountName] = useState<string | null>(null)
   const [activeLevel, setActiveLevel] = useState<HierarchyLevel>('campaign')
   const [lastSubmittedParams, setLastSubmittedParams] = useState<SubmittedParams | null>(null)
   const [activeQuery, setActiveQuery] = useState<InsightsDataQuery | null>(null)
@@ -253,6 +297,7 @@ const InsightsDataPage = () => {
   const [detailEntityName, setDetailEntityName] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [visibleMetricKeys, setVisibleMetricKeys] = useState<MetricKey[]>(DEFAULT_VISIBLE_METRICS)
+  const [columnOrder, setColumnOrder] = useState<MetricKey[]>(() => [...DEFAULT_COLUMN_ORDER])
   const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false)
   const [selectedEntityIds, setSelectedEntityIds] = useState<Record<HierarchyLevel, Set<string>>>(() => createEmptySelectionMap())
   const [drillSelection, setDrillSelection] = useState<Record<HierarchyLevel, string | null>>({
@@ -261,6 +306,66 @@ const InsightsDataPage = () => {
     adset: null,
     ad: null
   })
+  const configContext = useContext(ConfigProvider.ConfigContext)
+  const columnModalPrefix = useMemo(
+    () => (configContext?.getPrefixCls ? configContext.getPrefixCls('insights-column-picker') : 'insights-column-picker'),
+    [configContext]
+  )
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    try {
+      const storedOrderRaw = window.localStorage.getItem('insights-column-order')
+      if (storedOrderRaw) {
+        const parsed = JSON.parse(storedOrderRaw)
+        setColumnOrder(sanitizeColumnOrder(parsed))
+      }
+      const storedVisibleRaw = window.localStorage.getItem('insights-visible-metrics')
+      if (storedVisibleRaw) {
+        const parsedVisible = JSON.parse(storedVisibleRaw)
+        setVisibleMetricKeys(sanitizeVisibleMetrics(parsedVisible, DEFAULT_VISIBLE_METRICS))
+      }
+    } catch (error) {
+      console.warn('[Insights] Failed to load saved column preferences', error)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    try {
+      window.localStorage.setItem('insights-column-order', JSON.stringify(columnOrder))
+    } catch {
+      /* noop */
+    }
+  }, [columnOrder])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    try {
+      window.localStorage.setItem('insights-visible-metrics', JSON.stringify(visibleMetricKeys))
+    } catch {
+      /* noop */
+    }
+  }, [visibleMetricKeys])
+
+  useEffect(() => {
+    setVisibleMetricKeys(prev => {
+      const filtered = prev.filter(key => columnOrder.includes(key))
+      if (filtered.length === prev.length) {
+        return prev
+      }
+      if (filtered.length === 0 && columnOrder.length > 0) {
+        return [columnOrder[0]]
+      }
+      return filtered
+    })
+  }, [columnOrder])
 
   const resolveObjectFilter = useCallback(
     (targetLevel: HierarchyLevel) => {
@@ -335,6 +440,13 @@ const InsightsDataPage = () => {
   }, [resultLevel])
 
   // Function to get the correct ID and name from a record based on level
+  const normalizedSubmittedAccountId = useMemo(() => {
+    if (!activeQuery?.accountId) {
+      return null
+    }
+    return activeQuery.accountId.replace(/^act_/, '')
+  }, [activeQuery?.accountId])
+
   const getEntityId = useCallback(
     (record: InsightRecord) => {
       if (record.adId) {
@@ -362,9 +474,20 @@ const InsightsDataPage = () => {
       if (record.campaignName) {
         return record.campaignName
       }
+      if (resultLevel === 'account') {
+        const recordAccountId = record.adId?.replace(/^act_/, '') ?? record.adId ?? ''
+        if (
+          normalizedSubmittedAccountId &&
+          recordAccountId === normalizedSubmittedAccountId &&
+          submittedAccountName
+        ) {
+          return submittedAccountName
+        }
+        return submittedAccountName ?? record.adName ?? null
+      }
       return null
     },
-    []
+    [resultLevel, normalizedSubmittedAccountId, submittedAccountName]
   )
 
   const queryResult = useQuery({
@@ -511,9 +634,17 @@ const InsightsDataPage = () => {
     [metricTimeline]
   )
 
+  const orderedColumns = useMemo(
+    () =>
+      columnOrder
+        .map(key => METRIC_COLUMNS.find(column => column.key === key))
+        .filter((column): column is (typeof METRIC_COLUMNS)[number] => Boolean(column)),
+    [columnOrder]
+  )
+
   const visibleMetricColumns = useMemo(
-    () => METRIC_COLUMNS.filter(column => visibleMetricKeys.includes(column.key)),
-    [visibleMetricKeys]
+    () => orderedColumns.filter(column => visibleMetricKeys.includes(column.key)),
+    [orderedColumns, visibleMetricKeys]
   )
 
   useEffect(() => {
@@ -832,11 +963,12 @@ const InsightsDataPage = () => {
     () =>
       HIERARCHY_LEVELS.map(levelKey => {
         if (levelKey === 'account') {
-          return `${LEVEL_LABELS[levelKey]}: ${lastSubmittedParams?.accountId ?? '—'}`
+          const accountLabel = submittedAccountName ?? lastSubmittedParams?.accountId ?? '—'
+          return `${LEVEL_LABELS[levelKey]}: ${accountLabel}`
         }
         return `${LEVEL_LABELS[levelKey]}: ${drillSelection[levelKey] ?? '—'}`
       }),
-    [drillSelection, lastSubmittedParams]
+    [drillSelection, lastSubmittedParams, submittedAccountName]
   )
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -873,6 +1005,7 @@ const InsightsDataPage = () => {
       breakdowns: breakdowns.trim() || undefined
     }
     setFormError(null)
+    setSubmittedAccountName(selectedAccountName ?? null)
     setLastSubmittedParams(submittedParams)
     setSelectedEntityIds(createEmptySelectionMap())
     setDrillSelection({
@@ -983,6 +1116,23 @@ const InsightsDataPage = () => {
     })
   }
 
+  const moveColumn = useCallback((metricKey: MetricKey, direction: 'up' | 'down') => {
+    setColumnOrder(order => {
+      const currentIndex = order.indexOf(metricKey)
+      if (currentIndex === -1) {
+        return order
+      }
+      const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
+      if (nextIndex < 0 || nextIndex >= order.length) {
+        return order
+      }
+      const next = [...order]
+      const [removed] = next.splice(currentIndex, 1)
+      next.splice(nextIndex, 0, removed)
+      return next
+    })
+  }, [])
+
   const isLoading = queryResult.isFetching && !queryResult.data
   const isRefetching = queryResult.isFetching && Boolean(queryResult.data)
   const errorMessage =
@@ -1021,11 +1171,19 @@ const InsightsDataPage = () => {
             <span>广告账号</span>
             <AdAccountSelect
               value={accountInput}
-              onChange={setAccountInput}
+              onChange={value => {
+                setAccountInput(value)
+                if (!value) {
+                  setSelectedAccountName(null)
+                }
+              }}
               placeholder="act_123456789"
               inputClassName="input"
               required
               helperText="可输入或从下拉列表选择 act_ 开头的账号 ID。"
+              onAccountDetailsChange={details => {
+                setSelectedAccountName(details?.name ?? null)
+              }}
             />
           </label>
           <label className="form-label" style={{ flex: '1 1 160px' }}>
@@ -1366,19 +1524,6 @@ const InsightsDataPage = () => {
                             >
                               详情
                             </button>
-                            {nextLevel && (
-                              <button
-                                type="button"
-                                className="button button--ghost"
-                                onClick={event => {
-                                  event.stopPropagation()
-                                  handleRowFocus(entity.entityId)
-                                  handleLevelChange(nextLevel)
-                                }}
-                              >
-                                下钻 {LEVEL_LABELS[nextLevel]}
-                              </button>
-                            )}
                           </div>
                         </td>
                         {visibleMetricColumns.map(column => (
@@ -1457,21 +1602,60 @@ const InsightsDataPage = () => {
         footer={null}
         destroyOnClose
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {METRIC_COLUMNS.map(column => {
+        <div
+          className={`${columnModalPrefix}__list`}
+          style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}
+        >
+          {columnOrder.map(metricKey => {
+            const column = METRIC_COLUMNS.find(item => item.key === metricKey)
+            if (!column) {
+              return null
+            }
             const checked = visibleMetricKeys.includes(column.key)
             return (
-              <label
+              <div
                 key={column.key}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 500 }}
+                className={`${columnModalPrefix}__item`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '0.5rem',
+                  padding: '0.4rem 0.2rem',
+                  borderBottom: '1px solid var(--color-border, #f0f0f0)'
+                }}
               >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={event => handleMetricToggle(column.key, event.target.checked)}
-                />
-                <span>{column.label}</span>
-              </label>
+                <label
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 500 }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={event => handleMetricToggle(column.key, event.target.checked)}
+                  />
+                  <span>{column.label}</span>
+                </label>
+                <div style={{ display: 'flex', gap: '0.25rem' }}>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={() => moveColumn(column.key, 'up')}
+                    disabled={columnOrder[0] === column.key}
+                    style={{ padding: '0.15rem 0.5rem' }}
+                  >
+                    上移
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={() => moveColumn(column.key, 'down')}
+                    disabled={columnOrder[columnOrder.length - 1] === column.key}
+                    style={{ padding: '0.15rem 0.5rem' }}
+                  >
+                    下移
+                  </button>
+                </div>
+              </div>
             )
           })}
         </div>
@@ -1489,14 +1673,17 @@ const InsightsDataPage = () => {
             <button
               type="button"
               className="button button--ghost"
-              onClick={() => setVisibleMetricKeys(METRIC_COLUMNS.map(column => column.key))}
+              onClick={() => setVisibleMetricKeys([...columnOrder])}
             >
               全部显示
             </button>
             <button
               type="button"
               className="button button--ghost"
-              onClick={() => setVisibleMetricKeys(DEFAULT_VISIBLE_METRICS)}
+              onClick={() => {
+                setColumnOrder([...DEFAULT_COLUMN_ORDER])
+                setVisibleMetricKeys(DEFAULT_VISIBLE_METRICS)
+              }}
             >
               恢复默认
             </button>
