@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef, useCallback, useContext } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Modal, message, ConfigProvider } from 'antd'
+import { Modal, message, ConfigProvider, Spin } from 'antd'
 import {
   fetchInsightsData,
   syncEntityNames,
@@ -66,7 +66,23 @@ const DEFAULT_VISIBLE_METRICS: MetricKey[] = [
   'onsiteWebPurchaseValue'
 ]
 
+const clampWidth = (value: number, min = 80, max = 400) => Math.min(max, Math.max(min, value))
 const DEFAULT_COLUMN_ORDER: MetricKey[] = METRIC_COLUMNS.map(column => column.key)
+const DEFAULT_COLUMN_WIDTHS: Record<MetricKey, number> = {
+  spend: 140,
+  impressions: 140,
+  reach: 140,
+  clicks: 120,
+  inlineLinkClicks: 160,
+  outboundClicks: 150,
+  landingPageView: 160,
+  onsiteWebCheckout: 150,
+  onsiteWebAddToCart: 160,
+  onsiteWebPurchase: 150,
+  onsiteWebCheckoutValue: 180,
+  onsiteWebAddToCartValue: 200,
+  onsiteWebPurchaseValue: 200
+}
 
 const isMetricKey = (value: string): value is MetricKey =>
   METRIC_COLUMNS.some(column => column.key === value)
@@ -90,6 +106,23 @@ const sanitizeColumnOrder = (order: unknown): MetricKey[] => {
     }
   }
   return normalized
+}
+
+const sanitizeColumnWidths = (source: unknown): Record<MetricKey, number> => {
+  const widths: Record<MetricKey, number> = { ...DEFAULT_COLUMN_WIDTHS }
+  if (typeof source !== 'object' || source === null) {
+    return widths
+  }
+  for (const key of Object.keys(source)) {
+    if (!isMetricKey(key)) {
+      continue
+    }
+    const value = Number((source as Record<string, unknown>)[key])
+    if (Number.isFinite(value)) {
+      widths[key] = clampWidth(value)
+    }
+  }
+  return widths
 }
 
 const sanitizeVisibleMetrics = (keys: unknown, fallback: MetricKey[]): MetricKey[] => {
@@ -298,6 +331,7 @@ const InsightsDataPage = () => {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [visibleMetricKeys, setVisibleMetricKeys] = useState<MetricKey[]>(DEFAULT_VISIBLE_METRICS)
   const [columnOrder, setColumnOrder] = useState<MetricKey[]>(() => [...DEFAULT_COLUMN_ORDER])
+  const [columnWidths, setColumnWidths] = useState<Record<MetricKey, number>>({ ...DEFAULT_COLUMN_WIDTHS })
   const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false)
   const [selectedEntityIds, setSelectedEntityIds] = useState<Record<HierarchyLevel, Set<string>>>(() => createEmptySelectionMap())
   const [drillSelection, setDrillSelection] = useState<Record<HierarchyLevel, string | null>>({
@@ -306,6 +340,7 @@ const InsightsDataPage = () => {
     adset: null,
     ad: null
   })
+  const [syncingEntityIds, setSyncingEntityIds] = useState<Set<string>>(() => new Set())
   const configContext = useContext(ConfigProvider.ConfigContext)
   const columnModalPrefix = useMemo(
     () => (configContext?.getPrefixCls ? configContext.getPrefixCls('insights-column-picker') : 'insights-column-picker'),
@@ -327,6 +362,11 @@ const InsightsDataPage = () => {
         const parsedVisible = JSON.parse(storedVisibleRaw)
         setVisibleMetricKeys(sanitizeVisibleMetrics(parsedVisible, DEFAULT_VISIBLE_METRICS))
       }
+      const storedWidthRaw = window.localStorage.getItem('insights-column-widths')
+      if (storedWidthRaw) {
+        const parsedWidths = JSON.parse(storedWidthRaw)
+        setColumnWidths(sanitizeColumnWidths(parsedWidths))
+      }
     } catch (error) {
       console.warn('[Insights] Failed to load saved column preferences', error)
     }
@@ -343,6 +383,26 @@ const InsightsDataPage = () => {
     }
   }, [columnOrder])
 
+  const updateSyncingEntities = useCallback((ids: string[], action: 'add' | 'remove') => {
+    if (!ids.length) {
+      return
+    }
+    setSyncingEntityIds(prev => {
+      const next = new Set(prev)
+      for (const id of ids) {
+        if (!id) {
+          continue
+        }
+        if (action === 'add') {
+          next.add(id)
+        } else {
+          next.delete(id)
+        }
+      }
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     if (typeof window === 'undefined') {
       return
@@ -353,6 +413,17 @@ const InsightsDataPage = () => {
       /* noop */
     }
   }, [visibleMetricKeys])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    try {
+      window.localStorage.setItem('insights-column-widths', JSON.stringify(columnWidths))
+    } catch {
+      /* noop */
+    }
+  }, [columnWidths])
 
   useEffect(() => {
     setVisibleMetricKeys(prev => {
@@ -760,7 +831,7 @@ const InsightsDataPage = () => {
         }
       })
     },
-    [activeQuery, queryClient]
+    [activeQuery, queryClient, getEntityId]
   )
 
   // Auto-sync entity names when insights data loads
@@ -805,8 +876,11 @@ const InsightsDataPage = () => {
       syncedQueriesRef.current.add(queryKey)
       console.log('[Entity Sync] Starting sync...')
 
+      const pendingIds = Array.from(unnamedEntityIds)
+      updateSyncingEntities(pendingIds, 'add')
+
       const syncNames = async () => {
-        const entityIdBatches = chunkArray(Array.from(unnamedEntityIds), ENTITY_NAME_SYNC_BATCH_SIZE)
+        const entityIdBatches = chunkArray(pendingIds, ENTITY_NAME_SYNC_BATCH_SIZE)
         const aggregateResult = {
           synced: 0,
           failed: 0,
@@ -857,6 +931,7 @@ const InsightsDataPage = () => {
             })
             // Allow retry later
             syncedQueriesRef.current.delete(queryKey)
+            updateSyncingEntities(pendingIds, 'remove')
             return
           }
 
@@ -868,6 +943,7 @@ const InsightsDataPage = () => {
             })
             // Remove from synced set on complete failure so it can be retried
             syncedQueriesRef.current.delete(queryKey)
+            updateSyncingEntities(pendingIds, 'remove')
             return
           }
 
@@ -890,12 +966,17 @@ const InsightsDataPage = () => {
             // Invalidate cache and refetch insights to get updated names
             await queryClient.invalidateQueries({ queryKey: ['insights-data', activeQuery] })
             queryResult.refetch()
+            updateSyncingEntities(pendingIds, 'remove')
+          }
+          if (aggregateResult.synced === 0 && aggregateResult.failed === 0 && aggregateResult.rateLimited === 0) {
+            updateSyncingEntities(pendingIds, 'remove')
           }
         } catch (error) {
           console.error('[Entity Sync] Sync failed:', error)
           message.error({ content: '同步实体名称失败', key: 'sync', duration: 3 })
           // Remove from synced set on error so it can be retried
           syncedQueriesRef.current.delete(queryKey)
+          updateSyncingEntities(pendingIds, 'remove')
         }
       }
 
@@ -903,7 +984,7 @@ const InsightsDataPage = () => {
     } else {
       console.log('[Entity Sync] No unnamed entities found')
     }
-  }, [insights, activeQuery, activeLevel, getEntityId, getEntityName, queryClient, queryResult, applySyncedNamesToCache])
+  }, [insights, activeQuery, activeLevel, getEntityId, getEntityName, queryClient, queryResult, applySyncedNamesToCache, updateSyncingEntities])
 
   // Get historical data for selected entity
   const selectedEntityData = useMemo(() => {
@@ -1006,6 +1087,7 @@ const InsightsDataPage = () => {
     }
     setFormError(null)
     setSubmittedAccountName(selectedAccountName ?? null)
+    setSyncingEntityIds(new Set())
     setLastSubmittedParams(submittedParams)
     setSelectedEntityIds(createEmptySelectionMap())
     setDrillSelection({
@@ -1131,6 +1213,13 @@ const InsightsDataPage = () => {
       next.splice(nextIndex, 0, removed)
       return next
     })
+  }, [])
+
+  const handleColumnWidthChange = useCallback((metricKey: MetricKey, rawValue: number) => {
+    setColumnWidths(prev => ({
+      ...prev,
+      [metricKey]: clampWidth(rawValue)
+    }))
   }, [])
 
   const isLoading = queryResult.isFetching && !queryResult.data
@@ -1356,7 +1445,7 @@ const InsightsDataPage = () => {
               </div>
               {totals && (
                 <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
-                  {(visibleMetricColumns.length ? visibleMetricColumns : METRIC_COLUMNS).slice(0, 4).map(column => (
+                  {orderedColumns.slice(0, 4).map(column => (
                     <div key={column.key}>
                       <div style={{ fontSize: '1.4rem', fontWeight: 600 }}>
                         {column.formatter(totals[column.key])}
@@ -1403,7 +1492,15 @@ const InsightsDataPage = () => {
                     <th style={{ width: '180px' }}>状态</th>
                     <th style={{ width: '180px' }}>操作</th>
                     {visibleMetricColumns.map(column => (
-                      <th key={column.key}>{column.label}</th>
+                      <th
+                        key={column.key}
+                        style={{
+                          width: columnWidths[column.key],
+                          minWidth: columnWidths[column.key]
+                        }}
+                      >
+                        {column.label}
+                      </th>
                     ))}
                   </tr>
                 </thead>
@@ -1412,9 +1509,26 @@ const InsightsDataPage = () => {
                     const isActiveRow = drillSelection[resultLevel] === entity.entityId
                     const checkboxChecked = currentLevelSelection.has(entity.entityId)
                     const currentIndex = HIERARCHY_LEVELS.indexOf(resultLevel)
-                    const nextLevel = HIERARCHY_LEVELS[currentIndex + 1]
                     const statusColor = getStatusColor(entity.configuredStatus)
-                    const displayName = entity.entityName ?? '名称未同步'
+                    const isSyncingName = syncingEntityIds.has(entity.entityId)
+                    const displayNameText = entity.entityName ?? (isSyncingName ? '同步中' : '名称未同步')
+                    const nameCell = entity.entityName ? (
+                      entity.entityName
+                    ) : isSyncingName ? (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          color: 'var(--color-text-muted)'
+                        }}
+                      >
+                        <Spin size="small" />
+                        <span>同步中…</span>
+                      </span>
+                    ) : (
+                      <span style={{ color: 'var(--color-text-muted)' }}>名称未同步</span>
+                    )
                     const showAvatar = resultLevel === 'ad'
 
                     return (
@@ -1469,7 +1583,7 @@ const InsightsDataPage = () => {
                                   fontWeight: 600
                                 }}
                               >
-                                {(displayName && displayName.charAt(0)) || entity.entityId.slice(-2)}
+                                {(displayNameText && displayNameText.charAt(0)) || entity.entityId.slice(-2)}
                               </div>
                             )}
                             <div>
@@ -1479,7 +1593,7 @@ const InsightsDataPage = () => {
                                   color: entity.entityName ? 'inherit' : 'var(--color-text-muted)'
                                 }}
                               >
-                                {displayName}
+                                {nameCell}
                               </div>
                               <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
                                 {entity.entityId}
@@ -1527,7 +1641,13 @@ const InsightsDataPage = () => {
                           </div>
                         </td>
                         {visibleMetricColumns.map(column => (
-                          <td key={`${entity.entityId}-${column.key}`}>
+                          <td
+                            key={`${entity.entityId}-${column.key}`}
+                            style={{
+                              width: columnWidths[column.key],
+                              minWidth: columnWidths[column.key]
+                            }}
+                          >
                             <span
                               title={formatMetricTooltip(entity.entityId, column.key) || '暂无日度数据'}
                               style={{ cursor: 'help' }}
@@ -1635,7 +1755,7 @@ const InsightsDataPage = () => {
                   />
                   <span>{column.label}</span>
                 </label>
-                <div style={{ display: 'flex', gap: '0.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
                   <button
                     type="button"
                     className="button button--ghost"
@@ -1654,6 +1774,16 @@ const InsightsDataPage = () => {
                   >
                     下移
                   </button>
+                </div>
+                <div style={{ width: '100px', textAlign: 'right' }}>
+                  <input
+                    type="number"
+                    min={80}
+                    max={400}
+                    value={columnWidths[column.key] ?? DEFAULT_COLUMN_WIDTHS[column.key]}
+                    onChange={event => handleColumnWidthChange(column.key, Number(event.target.value))}
+                    style={{ width: '100%', padding: '0.15rem', fontSize: '0.85rem' }}
+                  />
                 </div>
               </div>
             )
@@ -1683,6 +1813,7 @@ const InsightsDataPage = () => {
               onClick={() => {
                 setColumnOrder([...DEFAULT_COLUMN_ORDER])
                 setVisibleMetricKeys(DEFAULT_VISIBLE_METRICS)
+                setColumnWidths({ ...DEFAULT_COLUMN_WIDTHS })
               }}
             >
               恢复默认
