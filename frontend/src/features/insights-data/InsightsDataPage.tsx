@@ -340,6 +340,17 @@ const InsightsDataPage = () => {
     adset: null,
     ad: null
   })
+  const [drillOptions, setDrillOptions] = useState<Record<Exclude<HierarchyLevel, 'account'>, string[]>>({
+    campaign: [],
+    adset: [],
+    ad: []
+  })
+  const [openDropdownLevel, setOpenDropdownLevel] = useState<Exclude<HierarchyLevel, 'account'> | null>(null)
+  const dropdownRefs = useRef<Record<Exclude<HierarchyLevel, 'account'>, HTMLDivElement | null>>({
+    campaign: null,
+    adset: null,
+    ad: null
+  })
   const [syncingEntityIds, setSyncingEntityIds] = useState<Set<string>>(() => new Set())
   const configContext = useContext(ConfigProvider.ConfigContext)
   const columnModalPrefix = useMemo(
@@ -452,17 +463,10 @@ const InsightsDataPage = () => {
             ids: Array.from(multiSelected)
           }
         }
-        const drillId = drillSelection[parent]
-        if (drillId) {
-          return {
-            level: parent as Exclude<HierarchyLevel, 'account'>,
-            ids: [drillId]
-          }
-        }
       }
       return null
     },
-    [selectedEntityIds, drillSelection]
+    [selectedEntityIds]
   )
 
   const buildQueryForLevel = useCallback(
@@ -666,6 +670,36 @@ const InsightsDataPage = () => {
 
     return Array.from(grouped.values()).sort((a, b) => a.entityId.localeCompare(b.entityId))
   }, [insights, getEntityId, getEntityName])
+
+  useEffect(() => {
+    if (resultLevel === 'account' || aggregatedInsights.length === 0) {
+      return
+    }
+    const optionLevel = resultLevel as Exclude<HierarchyLevel, 'account'>
+    const nextOptions = Array.from(new Set(aggregatedInsights.map(entity => entity.entityId)))
+    setDrillOptions(prev => {
+      const updated = { ...prev }
+      updated[optionLevel] = nextOptions
+      return updated
+    })
+  }, [aggregatedInsights, resultLevel])
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!openDropdownLevel) {
+        return
+      }
+      const container = dropdownRefs.current[openDropdownLevel]
+      if (container && container.contains(event.target as Node)) {
+        return
+      }
+      setOpenDropdownLevel(null)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [openDropdownLevel])
 
   const metricTimeline = useMemo(() => {
     const map = new Map<string, Record<MetricKey, Array<{ date: string; value: number }>>>()
@@ -1049,25 +1083,15 @@ const InsightsDataPage = () => {
     }))
   }, [selectedEntityData])
 
-  const selectionBreadcrumbs = useMemo(
-    () =>
-      HIERARCHY_LEVELS.map(levelKey => {
-        if (levelKey === 'account') {
-          const accountLabel = submittedAccountName ?? lastSubmittedParams?.accountId ?? '—'
-          return `${LEVEL_LABELS[levelKey]}: ${accountLabel}`
-        }
-        return `${LEVEL_LABELS[levelKey]}: ${drillSelection[levelKey] ?? '—'}`
-      }),
-    [drillSelection, lastSubmittedParams, submittedAccountName]
+  const accountBreadcrumbLabel = useMemo(
+    () => submittedAccountName ?? lastSubmittedParams?.accountId ?? '—',
+    [submittedAccountName, lastSubmittedParams]
   )
 
   const hasActiveSelection = useMemo(() => {
     const levelKeys: HierarchyLevel[] = ['campaign', 'adset', 'ad']
-    const hasMultiSelection = levelKeys.some(level => selectedEntityIds[level]?.size > 0)
-    const hasDrill =
-      Boolean(drillSelection.campaign) || Boolean(drillSelection.adset) || Boolean(drillSelection.ad)
-    return hasMultiSelection || hasDrill
-  }, [selectedEntityIds, drillSelection])
+    return levelKeys.some(level => selectedEntityIds[level]?.size > 0)
+  }, [selectedEntityIds])
 
   const handleClearSelectionFilters = useCallback(() => {
     setSelectedEntityIds(createEmptySelectionMap())
@@ -1077,6 +1101,7 @@ const InsightsDataPage = () => {
       adset: null,
       ad: null
     }))
+    setOpenDropdownLevel(null)
     if (!lastSubmittedParams) {
       return
     }
@@ -1090,6 +1115,49 @@ const InsightsDataPage = () => {
       void queryResult.refetch()
     }
   }, [buildQueryForLevel, lastSubmittedParams, resultLevel, activeQuery, queryResult])
+
+  const handleDropdownItemToggle = useCallback(
+    (level: Exclude<HierarchyLevel, 'account'>, optionId: string, checked: boolean) => {
+      setSelectedEntityIds(prev => {
+        const updated: Record<HierarchyLevel, Set<string>> = {
+          account: new Set(prev.account),
+          campaign: new Set(prev.campaign),
+          adset: new Set(prev.adset),
+          ad: new Set(prev.ad)
+        }
+        const nextSet = new Set(updated[level])
+        if (checked) {
+          nextSet.add(optionId)
+        } else {
+          nextSet.delete(optionId)
+        }
+        const totalOptions = drillOptions[level].length
+        if (totalOptions > 0 && nextSet.size === totalOptions) {
+          nextSet.clear()
+        }
+        updated[level] = nextSet
+        return updated
+      })
+    },
+    [drillOptions]
+  )
+
+  const handleDropdownClearLevel = useCallback((level: Exclude<HierarchyLevel, 'account'>) => {
+    setSelectedEntityIds(prev => {
+      const updated: Record<HierarchyLevel, Set<string>> = {
+        account: new Set(prev.account),
+        campaign: new Set(prev.campaign),
+        adset: new Set(prev.adset),
+        ad: new Set(prev.ad)
+      }
+      updated[level] = new Set<string>()
+      return updated
+    })
+  }, [])
+
+  const toggleDropdownLevel = useCallback((level: Exclude<HierarchyLevel, 'account'>) => {
+    setOpenDropdownLevel(prev => (prev === level ? null : level))
+  }, [])
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1483,7 +1551,79 @@ const InsightsDataPage = () => {
                 flexWrap: 'wrap'
               }}
             >
-              <span>路径：{selectionBreadcrumbs.join(' / ')}</span>
+              <span>广告账号：{accountBreadcrumbLabel}</span>
+              {(['campaign', 'adset', 'ad'] as Array<Exclude<HierarchyLevel, 'account'>>).map(levelKey => {
+                const selectedSet = selectedEntityIds[levelKey] ?? new Set<string>()
+                const options = drillOptions[levelKey]
+                const summaryLabel =
+                  selectedSet.size === 0 ? `全部${LEVEL_LABELS[levelKey]}` : `已选 ${selectedSet.size}`
+                return (
+                  <div
+                    key={levelKey}
+                    ref={node => {
+                      dropdownRefs.current[levelKey] = node
+                    }}
+                    style={{ position: 'relative', display: 'inline-flex', flexDirection: 'column', gap: '0.4rem' }}
+                  >
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      onClick={() => toggleDropdownLevel(levelKey)}
+                      style={{ minWidth: '200px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    >
+                      <span>{LEVEL_LABELS[levelKey]}：{summaryLabel}</span>
+                      <span style={{ fontSize: '0.75rem' }}>{openDropdownLevel === levelKey ? '▲' : '▼'}</span>
+                    </button>
+                    {openDropdownLevel === levelKey && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: '110%',
+                          left: 0,
+                          minWidth: '220px',
+                          background: '#fff',
+                          border: '1px solid var(--color-border, #d9d9d9)',
+                          borderRadius: '8px',
+                          boxShadow: '0 6px 16px rgba(0,0,0,0.08)',
+                          maxHeight: '240px',
+                          overflow: 'auto',
+                          zIndex: 5,
+                          padding: '8px 12px'
+                        }}
+                      >
+                        <div style={{ marginBottom: '8px', fontWeight: 500 }}>{LEVEL_LABELS[levelKey]}筛选</div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedSet.size === 0}
+                            onChange={() => handleDropdownClearLevel(levelKey)}
+                          />
+                          <span>全部{LEVEL_LABELS[levelKey]}</span>
+                        </label>
+                        {options.length === 0 ? (
+                          <div style={{ color: 'var(--color-text-muted)' }}>暂无可选项</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            {options.map(optionId => (
+                              <label
+                                key={`${levelKey}-${optionId}`}
+                                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={selectedSet.has(optionId)}
+                                  onChange={event => handleDropdownItemToggle(levelKey, optionId, event.target.checked)}
+                                />
+                                <span style={{ wordBreak: 'break-all' }}>{optionId}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
               <button
                 type="button"
                 className="button button--ghost"
