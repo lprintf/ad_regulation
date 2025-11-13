@@ -147,6 +147,54 @@ const mapApiResponse = (
   }
 }
 
+const filterInsightsByObjectSelection = (
+  records: InsightRecord[],
+  params: InsightsDataQuery
+): InsightRecord[] => {
+  const { objectLevel, objectIds } = params
+  if (!objectLevel || !objectIds || objectIds.length === 0) {
+    return records
+  }
+  const normalized = new Set(
+    objectIds
+      .map(id => String(id ?? '').trim())
+      .filter(id => id.length > 0)
+  )
+  if (normalized.size === 0) {
+    return records
+  }
+
+  const matchesFilter = (record: InsightRecord): boolean => {
+    switch (objectLevel) {
+      case 'ad':
+        return record.adId ? normalized.has(record.adId) : false
+      case 'adset':
+        return record.adsetId ? normalized.has(record.adsetId) : false
+      case 'campaign':
+        return record.campaignId ? normalized.has(record.campaignId) : false
+      default:
+        return false
+    }
+  }
+
+  return records.filter(matchesFilter)
+}
+
+const applyObjectFilterToResponse = (
+  response: InsightsDataResponse,
+  params: InsightsDataQuery
+): InsightsDataResponse => {
+  const filtered = filterInsightsByObjectSelection(response.insights, params)
+  if (filtered.length === response.insights.length) {
+    return response
+  }
+  return {
+    ...response,
+    insights: filtered,
+    totalRecords: filtered.length
+  }
+}
+
 const buildCommonParams = (params: InsightsDataQuery) => ({
   level: params.level ?? 'ad'
 })
@@ -224,24 +272,21 @@ const buildFromLastParams = (params: InsightsDataQuery) => {
   if (params.fields?.length) {
     payload.fields = params.fields.join(',')
   }
-  if (params.objectIds?.length) {
-    payload.object_ids = params.objectIds
-  }
-  if (params.objectLevel) {
-    payload.obj_level = params.objectLevel
-  }
+  // Intentionally omit object_ids / obj_level to maximize cache hits.
   return payload
 }
 
 export const fetchInsightsData = async (params: InsightsDataQuery): Promise<InsightsDataResponse> => {
   if (params.source === 'database') {
     const { data } = await apiClient.get('/insights', { params: buildDbParams(params) })
-    return mapApiResponse(data, params.since, params.until)
+    const response = mapApiResponse(data, params.since, params.until)
+    return applyObjectFilterToResponse(response, params)
   }
 
   if (params.source === 'realtime') {
     const { data } = await apiClient.post('/insights/query', buildRealtimePayload(params))
-    return mapApiResponse(data, params.since, params.until)
+    const response = mapApiResponse(data, params.since, params.until)
+    return applyObjectFilterToResponse(response, params)
   }
 
   // hybrid: fetch DB + realtime (gap) and merge
@@ -276,7 +321,7 @@ export const fetchInsightsData = async (params: InsightsDataQuery): Promise<Insi
     return left.localeCompare(right)
   })
 
-  return {
+  const mergedResponse: InsightsDataResponse = {
     insights: mergedInsights,
     totalRecords: mergedInsights.length,
     dateRange: {
@@ -284,6 +329,7 @@ export const fetchInsightsData = async (params: InsightsDataQuery): Promise<Insi
       until: params.until
     }
   }
+  return applyObjectFilterToResponse(mergedResponse, params)
 }
 
 export interface InsightsSyncTriggerPayload {

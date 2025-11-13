@@ -466,12 +466,17 @@ const InsightsDataPage = () => {
   )
 
   const buildQueryForLevel = useCallback(
-    (targetLevel: HierarchyLevel, baseOverride?: SubmittedParams | null): InsightsDataQuery | null => {
+    (
+      targetLevel: HierarchyLevel,
+      baseOverride?: SubmittedParams | null,
+      forcedFilter?: { level: Exclude<HierarchyLevel, 'account'>; ids: string[] } | null
+    ): InsightsDataQuery | null => {
       const base = baseOverride ?? lastSubmittedParams
       if (!base) {
         return null
       }
-      const filter = resolveObjectFilter(targetLevel)
+      const filter =
+        forcedFilter === undefined ? resolveObjectFilter(targetLevel) : forcedFilter
       const shouldRequestRealtimeFields = base.source !== 'database'
       return {
         accountId: base.accountId,
@@ -1056,6 +1061,36 @@ const InsightsDataPage = () => {
     [drillSelection, lastSubmittedParams, submittedAccountName]
   )
 
+  const hasActiveSelection = useMemo(() => {
+    const levelKeys: HierarchyLevel[] = ['campaign', 'adset', 'ad']
+    const hasMultiSelection = levelKeys.some(level => selectedEntityIds[level]?.size > 0)
+    const hasDrill =
+      Boolean(drillSelection.campaign) || Boolean(drillSelection.adset) || Boolean(drillSelection.ad)
+    return hasMultiSelection || hasDrill
+  }, [selectedEntityIds, drillSelection])
+
+  const handleClearSelectionFilters = useCallback(() => {
+    setSelectedEntityIds(createEmptySelectionMap())
+    setDrillSelection(prev => ({
+      account: prev.account,
+      campaign: null,
+      adset: null,
+      ad: null
+    }))
+    if (!lastSubmittedParams) {
+      return
+    }
+    const nextQuery = buildQueryForLevel(resultLevel, lastSubmittedParams, null)
+    if (!nextQuery) {
+      return
+    }
+    const shouldRefetchSameQuery = activeQuery ? areQueriesEqual(activeQuery, nextQuery) : false
+    setActiveQuery(nextQuery)
+    if (shouldRefetchSameQuery) {
+      void queryResult.refetch()
+    }
+  }, [buildQueryForLevel, lastSubmittedParams, resultLevel, activeQuery, queryResult])
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!sinceDate || !untilDate) {
@@ -1133,10 +1168,12 @@ const InsightsDataPage = () => {
   }
 
   const handleRowFocus = (entityId: string) => {
+    const currentIndex = HIERARCHY_LEVELS.indexOf(resultLevel)
+    const isSameEntity = drillSelection[resultLevel] === entityId
+
     setDrillSelection(prev => {
       const updated: Record<HierarchyLevel, string | null> = { ...prev }
-      updated[resultLevel] = entityId
-      const currentIndex = HIERARCHY_LEVELS.indexOf(resultLevel)
+      updated[resultLevel] = isSameEntity ? null : entityId
       for (let idx = currentIndex + 1; idx < HIERARCHY_LEVELS.length; idx += 1) {
         updated[HIERARCHY_LEVELS[idx]] = null
       }
@@ -1149,7 +1186,6 @@ const InsightsDataPage = () => {
         adset: new Set(prev.adset),
         ad: new Set(prev.ad)
       }
-      const currentIndex = HIERARCHY_LEVELS.indexOf(resultLevel)
       for (let idx = currentIndex + 1; idx < HIERARCHY_LEVELS.length; idx += 1) {
         updated[HIERARCHY_LEVELS[idx]] = new Set<string>()
       }
@@ -1436,8 +1472,26 @@ const InsightsDataPage = () => {
               </div>
             </div>
 
-            <div style={{ marginBottom: '1rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-              路径：{selectionBreadcrumbs.join(' / ')}
+            <div
+              style={{
+                marginBottom: '1rem',
+                fontSize: '0.85rem',
+                color: 'var(--color-text-muted)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                flexWrap: 'wrap'
+              }}
+            >
+              <span>路径：{selectionBreadcrumbs.join(' / ')}</span>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={handleClearSelectionFilters}
+                disabled={!hasActiveSelection || !lastSubmittedParams}
+              >
+                清空筛选
+              </button>
             </div>
 
             <div className="card__body" style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
