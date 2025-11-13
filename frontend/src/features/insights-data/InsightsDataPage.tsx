@@ -584,6 +584,7 @@ const InsightsDataPage = () => {
     },
     enabled: Boolean(activeQuery)
   })
+  const { refetch: refetchInsights } = queryResult
 
   const insights: InsightRecord[] = useMemo(() => {
     if (!queryResult.data?.insights) {
@@ -1008,7 +1009,7 @@ const InsightsDataPage = () => {
 
             // Invalidate cache and refetch insights to get updated names
             await queryClient.invalidateQueries({ queryKey: ['insights-data', activeQuery] })
-            queryResult.refetch()
+            void refetchInsights()
             updateSyncingEntities(pendingIds, 'remove')
           }
           if (aggregateResult.synced === 0 && aggregateResult.failed === 0 && aggregateResult.rateLimited === 0) {
@@ -1027,7 +1028,7 @@ const InsightsDataPage = () => {
     } else {
       console.log('[Entity Sync] No unnamed entities found')
     }
-  }, [insights, activeQuery, activeLevel, getEntityId, getEntityName, queryClient, queryResult, applySyncedNamesToCache, updateSyncingEntities])
+  }, [insights, activeQuery, activeLevel, getEntityId, getEntityName, queryClient, refetchInsights, applySyncedNamesToCache, updateSyncingEntities])
 
   // Get historical data for selected entity
   const selectedEntityData = useMemo(() => {
@@ -1112,9 +1113,9 @@ const InsightsDataPage = () => {
     const shouldRefetchSameQuery = activeQuery ? areQueriesEqual(activeQuery, nextQuery) : false
     setActiveQuery(nextQuery)
     if (shouldRefetchSameQuery) {
-      void queryResult.refetch()
+      void refetchInsights()
     }
-  }, [buildQueryForLevel, lastSubmittedParams, resultLevel, activeQuery, queryResult])
+  }, [buildQueryForLevel, lastSubmittedParams, resultLevel, activeQuery, refetchInsights])
 
   const handleDropdownItemToggle = useCallback(
     (level: Exclude<HierarchyLevel, 'account'>, optionId: string, checked: boolean) => {
@@ -1215,7 +1216,7 @@ const InsightsDataPage = () => {
     setActiveQuery(nextQuery)
 
     if (shouldRefetchSameQuery) {
-      void queryResult.refetch()
+      void refetchInsights()
     }
   }
 
@@ -1231,7 +1232,7 @@ const InsightsDataPage = () => {
     const shouldRefetchSameQuery = activeQuery ? areQueriesEqual(activeQuery, nextQuery) : false
     setActiveQuery(nextQuery)
     if (shouldRefetchSameQuery) {
-      void queryResult.refetch()
+      void refetchInsights()
     }
   }
 
