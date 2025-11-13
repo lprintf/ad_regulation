@@ -40,9 +40,13 @@ class InsightMetrics(BaseModel):
 class InsightRecord(BaseModel):
     """Single insight data record."""
 
-    ad_id: str = Field(
+    ad_account_id: str = Field(
         ...,
-        description="Entity ID - represents ad_id, adset_id, or campaign_id depending on query level",
+        description="Ad account ID (with act_ prefix)",
+    )
+    ad_id: str | None = Field(
+        default=None,
+        description="Ad ID when level=ad, otherwise null",
     )
     adset_id: str | None = Field(
         None, description="AdSet ID (populated when level=adset)"

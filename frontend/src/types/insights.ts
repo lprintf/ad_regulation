@@ -50,7 +50,8 @@ export interface InsightMetrics {
 }
 
 export interface InsightRecord {
-  adId: string // Entity ID - represents ad_id, adset_id, or campaign_id depending on query level
+  adAccountId: string
+  adId?: string | null // Ad ID (only for ad-level data)
   adsetId?: string | null // AdSet ID (populated when level=adset)
   campaignId?: string | null // Campaign ID (populated when level=campaign)
   // Entity names for better readability

@@ -37,8 +37,20 @@ export const fetchInsightsSyncRuns = async (): Promise<InsightAccountSyncStatus[
 
 const mapInsightRecordFromApi = (item: any): InsightRecord => {
   const metrics = item?.metrics ?? {}
+  const normalizeId = (value: any): string | null => {
+    if (value === undefined || value === null) {
+      return null
+    }
+    const text = String(value).trim()
+    return text ? text : null
+  }
+  const adAccountId =
+    normalizeId(item?.ad_account_id ?? item?.adAccountId) ??
+    normalizeId(item?.account_id ?? item?.accountId) ??
+    ''
   return {
-    adId: item?.ad_id ?? item?.adId ?? '',
+    adAccountId,
+    adId: normalizeId(item?.ad_id ?? item?.adId),
     adsetId: item?.adset_id ?? item?.adsetId ?? null,
     campaignId: item?.campaign_id ?? item?.campaignId ?? null,
     adName: item?.ad_name ?? item?.adName ?? null,
@@ -242,7 +254,10 @@ export const fetchInsightsData = async (params: InsightsDataQuery): Promise<Insi
   const realtimeResult = mapApiResponse(realtimeResponse.data, params.since, params.until)
 
   const recordMap = new Map<string, InsightRecord>()
-  const makeKey = (record: InsightRecord) => `${record.date}-${record.adId}`
+  const makeKey = (record: InsightRecord) => {
+    const entityKey = record.adId ?? record.adsetId ?? record.campaignId ?? record.adAccountId
+    return `${record.date}-${entityKey}`
+  }
 
   for (const record of dbResult.insights) {
     recordMap.set(makeKey(record), record)
@@ -256,7 +271,9 @@ export const fetchInsightsData = async (params: InsightsDataQuery): Promise<Insi
     if (dateCompare !== 0) {
       return dateCompare
     }
-    return a.adId.localeCompare(b.adId)
+    const left = a.adId ?? a.adsetId ?? a.campaignId ?? a.adAccountId
+    const right = b.adId ?? b.adsetId ?? b.campaignId ?? b.adAccountId
+    return left.localeCompare(right)
   })
 
   return {

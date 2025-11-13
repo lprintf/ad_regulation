@@ -529,6 +529,9 @@ const InsightsDataPage = () => {
       if (record.campaignId) {
         return record.campaignId
       }
+      if (record.adAccountId) {
+        return record.adAccountId
+      }
       return activeQuery?.accountId ?? ''
     },
     [activeQuery?.accountId]
@@ -546,7 +549,8 @@ const InsightsDataPage = () => {
         return record.campaignName
       }
       if (resultLevel === 'account') {
-        const recordAccountId = record.adId?.replace(/^act_/, '') ?? record.adId ?? ''
+        const accountIdentifier = record.adAccountId ?? record.adId ?? ''
+        const recordAccountId = accountIdentifier.replace(/^act_/, '')
         if (
           normalizedSubmittedAccountId &&
           recordAccountId === normalizedSubmittedAccountId &&

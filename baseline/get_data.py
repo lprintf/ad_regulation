@@ -101,7 +101,7 @@ def insight_to_df(insight: list, extra_fields: list[str] | None = None) -> pd.Da
         (
             {
                 "ad_id": _["ad_id"],
-                # "account_id": _["account_id"],
+                "account_id": _["account_id"],
                 "date_start": _["date_start"],
                 **get_atomic_metric(_),
                 **{field: _.get(field) for field in extra_fields},

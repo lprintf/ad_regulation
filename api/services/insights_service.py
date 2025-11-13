@@ -83,6 +83,20 @@ def _filter_insights_by_objects(
     return filtered
 
 
+def _sum_numeric_expression(field: str) -> dict[str, Any]:
+    """
+    Build an aggregation expression that safely sums numeric values stored
+    either as numbers or numeric strings.
+    """
+    return {
+        "$sum": {
+            "$toDouble": {
+                "$ifNull": [f"${field}", 0]
+            }
+        }
+    }
+
+
 
 def _build_from_last_cache_key(
     *,
@@ -264,7 +278,7 @@ class InsightsService:
                 realtime_since = historical_until + timedelta(days=1)
 
         requested_fields = fields or []
-        base_fields = ["ad_id", *ATOMIC_FIELDS]
+        base_fields = ["ad_id", "account_id", *ATOMIC_FIELDS]
         required_fields = []
         if fetch_level == "ad":
             required_fields.extend(["adset_id", "campaign_id"])
@@ -302,6 +316,9 @@ class InsightsService:
 
                 df = insight_to_df(insights, extra_fields=extra_fields_for_df)
                 api_records = InsightsService._df_to_insights_list(df)
+                for record in api_records:
+                    if not record.get("ad_account_id"):
+                        record["ad_account_id"] = account_id
                 if needs_aggregation:
                     api_records = InsightsService._aggregate_records_for_level(
                         api_records,
@@ -334,6 +351,12 @@ class InsightsService:
         insights_list = await InsightsService._attach_entity_names(
             insights_list, level, account_id_without_prefix
         )
+
+        if level != "ad":
+            insights_list = [
+                {**insight, "ad_id": None}
+                for insight in insights_list
+            ]
 
         return {
             "insights": insights_list,
@@ -641,6 +664,7 @@ class InsightsService:
         """Convert DataFrame to list of insight dictionaries."""
         insights_list = []
         columns = set(df.columns)
+        has_account_id = "account_id" in columns
         has_adset_id = "adset_id" in columns
         has_campaign_id = "campaign_id" in columns
         has_ad_name = "ad_name" in columns
@@ -659,6 +683,11 @@ class InsightsService:
 
         for _, row in df.iterrows():
             insight_record = {
+                "ad_account_id": InsightsService._normalize_account_id(
+                    str(row["account_id"])
+                )
+                if has_account_id and row.get("account_id") is not None
+                else None,
                 "ad_id": str(row["ad_id"]),
                 "adset_id": None,
                 "campaign_id": None,
@@ -756,7 +785,9 @@ class InsightsService:
     @staticmethod
     def _document_to_insight(doc: InsightsDailyDocument) -> dict[str, Any]:
         """Convert InsightsDailyDocument to insight dictionary."""
+        account_id = InsightsService._normalize_account_id(doc.account_id)
         return {
+            "ad_account_id": account_id,
             "ad_id": doc.ad_id,
             "adset_id": doc.adset_id,
             "campaign_id": doc.campaign_id,
@@ -799,6 +830,7 @@ class InsightsService:
         if not records:
             return records
 
+        normalized_account_id = InsightsService._normalize_account_id(account_id)
         group_field_map = {
             "account": None,
             "campaign": "campaign_id",
@@ -827,6 +859,7 @@ class InsightsService:
             if not bucket:
                 metric_template = {metric_key: 0 for metric_key in metrics.keys()}
                 bucket = {
+                    "ad_account_id": normalized_account_id,
                     "ad_id": str(entity_value),
                     "adset_id": str(entity_value) if target_level == "adset" else None,
                     "campaign_id": str(entity_value)
@@ -975,6 +1008,7 @@ class InsightsService:
         breakdowns: str | None = None,
         object_level: str | None = None,
         object_ids: list[str] | None = None,
+        mask_ad_ids: bool = False,
     ) -> dict[str, Any]:
         """
         Query insights data from MongoDB database only (no Facebook API calls).
@@ -1073,52 +1107,55 @@ class InsightsService:
                 field_name, normalized_ids = object_filter
                 match_stage[field_name] = {"$in": normalized_ids}
 
+            group_stage: dict[str, Any] = {
+                "_id": {
+                    group_field: f"${group_field}",
+                    "date_start": "$date_start",
+                },
+                "spend": _sum_numeric_expression("spend"),
+                "impressions": _sum_numeric_expression("impressions"),
+                "reach": _sum_numeric_expression("reach"),
+                "clicks": _sum_numeric_expression("clicks"),
+                "inline_link_clicks": _sum_numeric_expression("inline_link_clicks"),
+                "outbound_clicks": _sum_numeric_expression("outbound_clicks"),
+                "landing_page_view": _sum_numeric_expression("landing_page_view"),
+                "onsite_web_checkout": _sum_numeric_expression("onsite_web_checkout"),
+                "onsite_web_add_to_cart": _sum_numeric_expression("onsite_web_add_to_cart"),
+                "onsite_web_purchase": _sum_numeric_expression("onsite_web_purchase"),
+                "onsite_web_checkout_value": _sum_numeric_expression("onsite_web_checkout_value"),
+                "onsite_web_add_to_cart_value": _sum_numeric_expression("onsite_web_add_to_cart_value"),
+                "onsite_web_purchase_value": _sum_numeric_expression("onsite_web_purchase_value"),
+            }
+            if level == "adset":
+                # Preserve campaign ownership so downstream filtering by campaign keeps these records
+                group_stage["campaign_id"] = {"$first": "$campaign_id"}
+
+            project_stage: dict[str, Any] = {
+                "_id": 0,
+                "ad_id": f"$_id.{group_field}",
+                "date_start": "$_id.date_start",
+                "spend": 1,
+                "impressions": 1,
+                "reach": 1,
+                "clicks": 1,
+                "inline_link_clicks": 1,
+                "outbound_clicks": 1,
+                "landing_page_view": 1,
+                "onsite_web_checkout": 1,
+                "onsite_web_add_to_cart": 1,
+                "onsite_web_purchase": 1,
+                "onsite_web_checkout_value": 1,
+                "onsite_web_add_to_cart_value": 1,
+                "onsite_web_purchase_value": 1,
+            }
+            if level == "adset":
+                project_stage["campaign_id"] = "$campaign_id"
+
             # Build aggregation pipeline
             pipeline = [
-                {
-                    "$match": match_stage
-                },
-                {
-                    "$group": {
-                        "_id": {
-                            group_field: f"${group_field}",
-                            "date_start": "$date_start",
-                        },
-                        "spend": {"$sum": "$spend"},
-                        "impressions": {"$sum": "$impressions"},
-                        "reach": {"$sum": "$reach"},
-                        "clicks": {"$sum": "$clicks"},
-                        "inline_link_clicks": {"$sum": "$inline_link_clicks"},
-                        "outbound_clicks": {"$sum": "$outbound_clicks"},
-                        "landing_page_view": {"$sum": "$landing_page_view"},
-                        "onsite_web_checkout": {"$sum": "$onsite_web_checkout"},
-                        "onsite_web_add_to_cart": {"$sum": "$onsite_web_add_to_cart"},
-                        "onsite_web_purchase": {"$sum": "$onsite_web_purchase"},
-                        "onsite_web_checkout_value": {"$sum": "$onsite_web_checkout_value"},
-                        "onsite_web_add_to_cart_value": {"$sum": "$onsite_web_add_to_cart_value"},
-                        "onsite_web_purchase_value": {"$sum": "$onsite_web_purchase_value"},
-                    }
-                },
-                {
-                    "$project": {
-                        "_id": 0,
-                        "ad_id": f"$_id.{group_field}",
-                        "date_start": "$_id.date_start",
-                        "spend": 1,
-                        "impressions": 1,
-                        "reach": 1,
-                        "clicks": 1,
-                        "inline_link_clicks": 1,
-                        "outbound_clicks": 1,
-                        "landing_page_view": 1,
-                        "onsite_web_checkout": 1,
-                        "onsite_web_add_to_cart": 1,
-                        "onsite_web_purchase": 1,
-                        "onsite_web_checkout_value": 1,
-                        "onsite_web_add_to_cart_value": 1,
-                        "onsite_web_purchase_value": 1,
-                    }
-                },
+                {"$match": match_stage},
+                {"$group": group_stage},
+                {"$project": project_stage},
                 {"$sort": {"date_start": 1, "ad_id": 1}},
             ]
 
@@ -1131,10 +1168,16 @@ class InsightsService:
                 entity_value = result.get("ad_id")
                 if not entity_value:
                     continue
+                campaign_value = result.get("campaign_id")
                 record: dict[str, Any] = {
+                    "ad_account_id": account_id,
                     "ad_id": str(entity_value),
                     "adset_id": str(entity_value) if level == "adset" else None,
-                    "campaign_id": str(entity_value) if level == "campaign" else None,
+                    "campaign_id": (
+                        str(entity_value)
+                        if level == "campaign"
+                        else (str(campaign_value) if campaign_value is not None else None)
+                    ),
                     "ad_name": None,
                     "adset_name": None,
                     "campaign_name": None,
@@ -1176,6 +1219,14 @@ class InsightsService:
             insights_list, level, account_id_without_prefix
         )
 
+
+        if mask_ad_ids and level != "ad":
+            sanitized_list: list[dict[str, Any]] = []
+            for insight in insights_list:
+                sanitized = dict(insight)
+                sanitized["ad_id"] = None
+                sanitized_list.append(sanitized)
+            insights_list = sanitized_list
 
         return {
             "insights": insights_list,

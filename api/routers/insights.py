@@ -145,12 +145,14 @@ async def query_insights_from_database(
             breakdowns=breakdowns,
             object_level=object_level,
             object_ids=object_ids,
+            mask_ad_ids=True,
         )
 
         insights_data = InsightsResponse(
             insights=[
                 InsightRecord(
-                    ad_id=insight["ad_id"],
+                    ad_account_id=insight.get("ad_account_id") or ad_account_id,
+                    ad_id=insight.get("ad_id") if level == "ad" else None,
                     adset_id=insight.get("adset_id"),
                     campaign_id=insight.get("campaign_id"),
                     ad_name=insight.get("ad_name"),
@@ -225,10 +227,13 @@ async def query_insights_realtime(
             object_ids=request.object_ids,
         )
 
+        response_level = request.level or "ad"
+
         insights_data = InsightsResponse(
             insights=[
                 InsightRecord(
-                    ad_id=insight["ad_id"],
+                    ad_account_id=insight.get("ad_account_id") or ad_account_id,
+                    ad_id=insight.get("ad_id") if response_level == "ad" else None,
                     adset_id=insight.get("adset_id"),
                     campaign_id=insight.get("campaign_id"),
                     ad_name=insight.get("ad_name"),
@@ -282,10 +287,13 @@ async def _execute_query_from_last(
             cache_window_hint=request.cache_window_hint,
         )
 
+        response_level = request.level or "ad"
+
         insights_data = InsightsResponse(
             insights=[
                 InsightRecord(
-                    ad_id=insight["ad_id"],
+                    ad_account_id=insight.get("ad_account_id") or ad_account_id,
+                    ad_id=insight.get("ad_id") if response_level == "ad" else None,
                     adset_id=insight.get("adset_id"),
                     campaign_id=insight.get("campaign_id"),
                     ad_name=insight.get("ad_name"),
@@ -637,7 +645,8 @@ async def get_job_result(
         insights_data = InsightsResponse(
             insights=[
                 InsightRecord(
-                    ad_id=insight["ad_id"],
+                    ad_account_id=insight.get("ad_account_id") or ad_account_id,
+                    ad_id=insight.get("ad_id"),
                     adset_id=insight.get("adset_id"),
                     campaign_id=insight.get("campaign_id"),
                     ad_name=insight.get("ad_name"),
