@@ -255,9 +255,10 @@ interface AggregatedEntityRow {
 }
 
 const DATA_SOURCE_LABEL: Record<InsightsDataQuery['source'], string> = {
+  'frontend-hybrid': '混合（前端拼接）',
   database: '数据库',
   realtime: '实时数据',
-  hybrid: '混合（数据库 + 实时）'
+  hybrid: '混合（后端）'
 }
 
 const ENTITY_NAME_SYNC_BATCH_SIZE = 50
@@ -316,7 +317,7 @@ const InsightsDataPage = () => {
   const [timeIncrement, setTimeIncrement] = useState<'daily' | 'aggregate'>('daily')
   const [breakdowns, setBreakdowns] = useState('')
   const [selectedDataSource, setSelectedDataSource] =
-    useState<InsightsDataQuery['source']>('hybrid')
+    useState<InsightsDataQuery['source']>('frontend-hybrid')
   const [formError, setFormError] = useState<string | null>(null)
   const [selectedAccountName, setSelectedAccountName] = useState<string | null>(null)
   const [submittedAccountName, setSubmittedAccountName] = useState<string | null>(null)
@@ -1419,12 +1420,13 @@ const InsightsDataPage = () => {
               value={selectedDataSource}
               onChange={event => setSelectedDataSource(event.target.value as InsightsDataQuery['source'])}
             >
-              <option value="hybrid">混合（数据库 + 实时）</option>
+              <option value="frontend-hybrid">混合（前端：数据库 + from-last）</option>
               <option value="database">仅数据库</option>
               <option value="realtime">仅实时</option>
+              <option value="hybrid">混合（后端接口）</option>
             </select>
             <div className="form-hint">
-              默认混合模式：先返回已落库历史，再由后端混合接口追加最近实时窗口。仅数据库用于查看纯存量数据；仅实时会直接请求 Facebook，不落库。
+              默认混合模式：前端先请求数据库数据，再调用 from-last 实时补齐并在浏览器端合并；末项“混合（后端）”才会走新的 `/insights/query/hybrid`。
             </div>
           </div>
 

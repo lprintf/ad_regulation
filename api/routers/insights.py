@@ -390,11 +390,7 @@ async def _execute_query_from_last(
         )
 
 
-@router.get(
-    "/query/from-last",
-    response_model=SuccessResponse[InsightsResponse],
-    deprecated=True,
-)
+@router.get("/query/from-last", response_model=SuccessResponse[InsightsResponse])
 async def query_insights_from_last_gap_get(
     request: Annotated[InsightsFromLastRequest, Depends()],
     response: Response,
@@ -408,11 +404,7 @@ async def query_insights_from_last_gap_get(
     return await _execute_query_from_last(request)
 
 
-@router.post(
-    "/query/from-last",
-    response_model=SuccessResponse[InsightsResponse],
-    deprecated=True,
-)
+@router.post("/query/from-last", response_model=SuccessResponse[InsightsResponse])
 async def query_insights_from_last_gap_post(
     request: InsightsFromLastRequest,
     user_id: Annotated[str, Depends(get_current_user)] = None,

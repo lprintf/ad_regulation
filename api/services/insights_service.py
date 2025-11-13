@@ -425,12 +425,22 @@ class InsightsService:
             if cached_result:
                 return cached_result
 
+        if not last_synced_date:
+            last_synced_date = await _resolve_latest_synced_date(
+                account_id_without_prefix
+            )
+
         if last_synced_date:
             realtime_since_date = last_synced_date + timedelta(days=1)
             if realtime_since_date > until_date:
-                raise ValueError(
-                    f"请求的结束日期 {until} 不晚于已同步日期 {last_synced_date.isoformat()}，无需补齐。"
-                )
+                return {
+                    "insights": [],
+                    "total_records": 0,
+                    "date_range": {
+                        "since": until_date.strftime("%Y-%m-%d"),
+                        "until": until_date.strftime("%Y-%m-%d"),
+                    },
+                }
         else:
             fallback_window = max(REALTIME_LOOKBACK_DAYS, 1)
             realtime_since_date = until_date - timedelta(days=fallback_window)
@@ -1326,3 +1336,14 @@ class InsightsService:
             "total_records": len(insights_list),
             "date_range": {"since": since, "until": until},
         }
+async def _resolve_latest_synced_date(account_id_without_prefix: str) -> date | None:
+    docs = (
+        await InsightsDailyDocument.find(
+            InsightsDailyDocument.account_id == account_id_without_prefix
+        )
+        .sort(-InsightsDailyDocument.date_start)
+        .to_list(1)
+    )
+    if not docs:
+        return None
+    return docs[0].date_start.date()
