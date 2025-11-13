@@ -164,9 +164,7 @@ const REALTIME_ENTITY_FIELDS = [
   'adset_name',
   'campaign_name',
   'adset_id',
-  'campaign_id',
-  'configured_status',
-  'effective_status'
+  'campaign_id'
 ] as const
 
 type DerivedMetricKey = 'ctr' | 'cpc' | 'cpm' | 'cpa' | 'roas'
@@ -259,7 +257,7 @@ interface AggregatedEntityRow {
 const DATA_SOURCE_LABEL: Record<InsightsDataQuery['source'], string> = {
   database: '数据库',
   realtime: '实时数据',
-  hybrid: '数据库 + 实时数据'
+  hybrid: '混合（数据库 + 实时）'
 }
 
 const ENTITY_NAME_SYNC_BATCH_SIZE = 50
@@ -317,8 +315,8 @@ const InsightsDataPage = () => {
   const [untilDate, setUntilDate] = useState(defaultRange.until)
   const [timeIncrement, setTimeIncrement] = useState<'daily' | 'aggregate'>('daily')
   const [breakdowns, setBreakdowns] = useState('')
-  const [useDatabaseSource, setUseDatabaseSource] = useState(true)
-  const [useRealtimeSource, setUseRealtimeSource] = useState(false)
+  const [selectedDataSource, setSelectedDataSource] =
+    useState<InsightsDataQuery['source']>('hybrid')
   const [formError, setFormError] = useState<string | null>(null)
   const [selectedAccountName, setSelectedAccountName] = useState<string | null>(null)
   const [submittedAccountName, setSubmittedAccountName] = useState<string | null>(null)
@@ -1170,26 +1168,16 @@ const InsightsDataPage = () => {
       setFormError('起始日期不能晚于结束日期')
       return
     }
-    if (!useDatabaseSource && !useRealtimeSource) {
-      setFormError('请至少选择一个数据源（数据库或实时数据）')
-      return
-    }
     const normalizedAccount = normalizeAccountId(accountInput)
     if (!normalizedAccount) {
       setFormError('请输入广告账号 ID，例如 act_123456789')
       return
     }
-    const dataSourceMode: InsightsDataQuery['source'] =
-      useDatabaseSource && useRealtimeSource
-        ? 'hybrid'
-        : useRealtimeSource
-          ? 'realtime'
-          : 'database'
     const submittedParams: SubmittedParams = {
       accountId: normalizedAccount,
       since: sinceDate,
       until: untilDate,
-      source: dataSourceMode,
+      source: selectedDataSource,
       timeIncrement: timeIncrement === 'daily' ? 1 : null,
       breakdowns: breakdowns.trim() || undefined
     }
@@ -1426,30 +1414,17 @@ const InsightsDataPage = () => {
           </label>
           <div className="form-label" style={{ flex: '2 1 320px' }}>
             <span>数据源</span>
-            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-              <label
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 500 }}
-              >
-                <input
-                  type="checkbox"
-                  checked={useDatabaseSource}
-                  onChange={event => setUseDatabaseSource(event.target.checked)}
-                />
-                <span>数据库</span>
-              </label>
-              <label
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 500 }}
-              >
-                <input
-                  type="checkbox"
-                  checked={useRealtimeSource}
-                  onChange={event => setUseRealtimeSource(event.target.checked)}
-                />
-                <span>实时数据</span>
-              </label>
-            </div>
+            <select
+              className="input"
+              value={selectedDataSource}
+              onChange={event => setSelectedDataSource(event.target.value as InsightsDataQuery['source'])}
+            >
+              <option value="hybrid">混合（数据库 + 实时）</option>
+              <option value="database">仅数据库</option>
+              <option value="realtime">仅实时</option>
+            </select>
             <div className="form-hint">
-              至少勾选一个选项。勾选“实时数据”时会直接从 Facebook 拉取最新数据；同时勾选两个选项时自动调用混合接口，用数据库 + 最新实时数据拼接结果。
+              默认混合模式：先返回已落库历史，再由后端混合接口追加最近实时窗口。仅数据库用于查看纯存量数据；仅实时会直接请求 Facebook，不落库。
             </div>
           </div>
 

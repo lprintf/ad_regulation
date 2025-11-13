@@ -19,6 +19,7 @@ from api.models.insights import (
     InsightRecord,
     InsightsAccountSyncResponse,
     InsightsFromLastRequest,
+    InsightsHybridRequest,
     InsightsRequest,
     InsightsResponse,
     InsightsSyncRequest,
@@ -232,7 +233,7 @@ async def query_insights_realtime(
         insights_data = InsightsResponse(
             insights=[
                 InsightRecord(
-                    ad_account_id=insight.get("ad_account_id") or ad_account_id,
+                    ad_account_id=insight.get("ad_account_id") or request.ad_account_id,
                     ad_id=insight.get("ad_id") if response_level == "ad" else None,
                     adset_id=insight.get("adset_id"),
                     campaign_id=insight.get("campaign_id"),
@@ -264,6 +265,68 @@ async def query_insights_realtime(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch insights: {str(e)}",
+        )
+
+
+@router.post("/query/hybrid", response_model=SuccessResponse[InsightsResponse])
+async def query_insights_hybrid(
+    request: InsightsHybridRequest,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[InsightsResponse]:
+    """
+    Merge database data with realtime gap fill in a single round-trip.
+    Preferred replacement for calling /insights + /insights/query/from-last separately.
+    """
+    try:
+        result = await InsightsService.query_insights_hybrid(
+            ad_account_id=request.ad_account_id,
+            since=request.since,
+            until=request.until,
+            level=request.level,
+            time_increment=request.time_increment,
+            breakdowns=request.breakdowns,
+            fields=request.fields,
+            object_level=request.object_level,
+            object_ids=request.object_ids,
+            cache_window_hint=request.cache_window_hint,
+        )
+
+        response_level = request.level or "ad"
+        insights_data = InsightsResponse(
+            insights=[
+                InsightRecord(
+                    ad_account_id=insight.get("ad_account_id") or request.ad_account_id,
+                    ad_id=insight.get("ad_id") if response_level == "ad" else None,
+                    adset_id=insight.get("adset_id"),
+                    campaign_id=insight.get("campaign_id"),
+                    ad_name=insight.get("ad_name"),
+                    adset_name=insight.get("adset_name"),
+                    campaign_name=insight.get("campaign_name"),
+                    configured_status=insight.get("configured_status"),
+                    effective_status=insight.get("effective_status"),
+                    date=insight["date"],
+                    metrics=insight["metrics"],
+                )
+                for insight in result["insights"]
+            ],
+            total_records=result["total_records"],
+            date_range=result["date_range"],
+        )
+
+        return SuccessResponse(
+            data=insights_data,
+            message=f"Successfully fetched {result['total_records']} hybrid insight records",
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch hybrid insights: {str(e)}",
         )
 
 
@@ -327,7 +390,11 @@ async def _execute_query_from_last(
         )
 
 
-@router.get("/query/from-last", response_model=SuccessResponse[InsightsResponse])
+@router.get(
+    "/query/from-last",
+    response_model=SuccessResponse[InsightsResponse],
+    deprecated=True,
+)
 async def query_insights_from_last_gap_get(
     request: Annotated[InsightsFromLastRequest, Depends()],
     response: Response,
@@ -341,7 +408,11 @@ async def query_insights_from_last_gap_get(
     return await _execute_query_from_last(request)
 
 
-@router.post("/query/from-last", response_model=SuccessResponse[InsightsResponse])
+@router.post(
+    "/query/from-last",
+    response_model=SuccessResponse[InsightsResponse],
+    deprecated=True,
+)
 async def query_insights_from_last_gap_post(
     request: InsightsFromLastRequest,
     user_id: Annotated[str, Depends(get_current_user)] = None,

@@ -33,6 +33,11 @@ OBJECT_LEVEL_TO_FIELD: dict[str, str] = {
     "campaign": "campaign_id",
 }
 
+UNSUPPORTED_GRAPH_FIELDS: set[str] = {
+    "configured_status",
+    "effective_status",
+}
+
 
 def _normalize_cache_key_fields(fields: list[str] | None) -> str:
     if not fields:
@@ -277,7 +282,11 @@ class InsightsService:
 
                 realtime_since = historical_until + timedelta(days=1)
 
-        requested_fields = fields or []
+        requested_fields = [
+            field
+            for field in (fields or [])
+            if field not in UNSUPPORTED_GRAPH_FIELDS
+        ]
         base_fields = ["ad_id", "account_id", *ATOMIC_FIELDS]
         required_fields = []
         if fetch_level == "ad":
@@ -445,6 +454,90 @@ class InsightsService:
         if cache_key:
             await _set_from_last_cache(cache_key, result)
         return result
+
+    @staticmethod
+    async def query_insights_hybrid(
+        ad_account_id: str,
+        since: str,
+        until: str,
+        level: str = "ad",
+        time_increment: int | None = None,
+        breakdowns: str | None = None,
+        fields: list[str] | None = None,
+        object_level: str | None = None,
+        object_ids: list[str] | None = None,
+        cache_window_hint: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Combine database data with realtime gap fill in a single response.
+        This mirrors the old frontend hybrid merge while keeping deduplication server-side.
+        """
+
+        account_id = InsightsService._normalize_account_id(ad_account_id)
+
+        db_task = InsightsService.query_insights_from_db(
+            ad_account_id=account_id,
+            since=since,
+            until=until,
+            level=level,
+            time_increment=time_increment,
+            breakdowns=breakdowns,
+            object_level=object_level,
+            object_ids=object_ids,
+            mask_ad_ids=False,
+        )
+        realtime_task = InsightsService.query_insights_from_last_gap(
+            ad_account_id=account_id,
+            until=until,
+            level=level,
+            time_increment=time_increment,
+            breakdowns=breakdowns,
+            fields=fields,
+            object_level=object_level,
+            object_ids=object_ids,
+            cache_window_hint=cache_window_hint,
+        )
+
+        db_result, realtime_result = await asyncio.gather(db_task, realtime_task)
+
+        def _record_key(record: dict[str, Any]) -> str:
+            entity_value = (
+                record.get("ad_id")
+                or record.get("adset_id")
+                or record.get("campaign_id")
+                or record.get("ad_account_id")
+                or ""
+            )
+            return f"{record.get('date')}|{entity_value}"
+
+        merged: dict[str, dict[str, Any]] = {}
+        for insight in db_result["insights"]:
+            merged[_record_key(insight)] = insight
+        for insight in realtime_result["insights"]:
+            merged[_record_key(insight)] = insight
+
+        merged_list = sorted(
+            merged.values(),
+            key=lambda item: (
+                item.get("date"),
+                item.get("ad_id")
+                or item.get("adset_id")
+                or item.get("campaign_id")
+                or item.get("ad_account_id"),
+            ),
+        )
+
+        filtered_list = _filter_insights_by_objects(
+            merged_list,
+            object_level,
+            object_ids,
+        )
+
+        return {
+            "insights": filtered_list,
+            "total_records": len(filtered_list),
+            "date_range": {"since": since, "until": until},
+        }
 
     @staticmethod
     async def create_async_job(

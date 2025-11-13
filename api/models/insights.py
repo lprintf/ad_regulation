@@ -132,6 +132,17 @@ class InsightsSyncRequest(InsightsRequest):
     )
 
 
+def _validate_cache_hint_value(value: str | None) -> str | None:
+    if value is None:
+        return value
+    pattern = r"\d{2}:\d{2}:\d{2}"
+    if re.fullmatch(pattern, value):
+        return value
+    raise ValueError(
+        "cache_window_hint must follow dd:hh:mm format, for example '12:14:30'."
+    )
+
+
 class InsightsFromLastRequest(BaseModel):
     """Request payload for filling realtime window using last sync metadata."""
 
@@ -196,14 +207,22 @@ class InsightsFromLastRequest(BaseModel):
     @field_validator("cache_window_hint")
     @classmethod
     def _validate_cache_hint(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        pattern = r"\d{2}:\d{2}:\d{2}"
-        if re.fullmatch(pattern, value):
-            return value
-        raise ValueError(
-            "cache_window_hint must follow dd:hh:mm format, for example '12:14:30'."
-        )
+        return _validate_cache_hint_value(value)
+
+
+class InsightsHybridRequest(InsightsSyncRequest):
+    """Request payload for hybrid (database + realtime gap) queries."""
+
+    cache_window_hint: str | None = Field(
+        default=None,
+        description="Optional dd:hh:mm hint so gateway caches hybrid realtime window responses.",
+        examples=["12:14:30"],
+    )
+
+    @field_validator("cache_window_hint")
+    @classmethod
+    def _validate_cache_hint(cls, value: str | None) -> str | None:
+        return _validate_cache_hint_value(value)
 
 
 class InsightsResponse(BaseModel):
