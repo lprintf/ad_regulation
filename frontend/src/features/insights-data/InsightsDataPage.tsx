@@ -55,6 +55,7 @@ const METRIC_COLUMN_MAP = METRIC_COLUMNS.reduce<Record<MetricKey, (typeof METRIC
 
 const MAX_TOOLTIP_POINTS = 14
 const MAX_SELECTED_ACCOUNTS = 9
+const DEFAULT_TIME_INCREMENT = 1
 
 type MetricKey = (typeof METRIC_COLUMNS)[number]['key']
 
@@ -302,8 +303,7 @@ const InsightsDataPage = () => {
   const defaultRange = useMemo(getDefaultDateRange, [])
   const [sinceDate, setSinceDate] = useState(defaultRange.since)
   const [untilDate, setUntilDate] = useState(defaultRange.until)
-  const [timeIncrement, setTimeIncrement] = useState<'daily' | 'aggregate'>('daily')
-  const [breakdowns, setBreakdowns] = useState('')
+  const [timeIncrement] = useState(DEFAULT_TIME_INCREMENT)
   const [selectedDataSource, setSelectedDataSource] =
     useState<InsightsDataQuery['source']>('frontend-hybrid')
   const [formError, setFormError] = useState<string | null>(null)
@@ -359,48 +359,39 @@ const InsightsDataPage = () => {
     }
     return map
   }, [adAccounts])
+  const syncAccountCheckboxes = useCallback((next: Set<string>) => {
+    setSelectedEntityIds(prev => ({
+      account: new Set(next),
+      campaign: new Set(prev.campaign),
+      adset: new Set(prev.adset),
+      ad: new Set(prev.ad)
+    }))
+  }, [])
   useEffect(() => {
-    if (!adAccounts.length) {
+    if (!adAccounts.length || lastSubmittedParams) {
       return
     }
-    setSelectedAccountIds(prev => {
-      if (prev.size > 0) {
-        return prev
-      }
-      const initialIds = adAccounts.slice(0, MAX_SELECTED_ACCOUNTS).map(account => account.id)
-      const initialSet = new Set(initialIds)
-      setActiveAccountIds(current => (current.size > 0 ? current : initialSet))
-      return initialSet
-    })
-  }, [adAccounts])
-
-  useEffect(() => {
-    if (lastSubmittedParams || selectedAccountIds.size === 0) {
-      return
-    }
+    const initialIds = adAccounts.slice(0, MAX_SELECTED_ACCOUNTS).map(account => account.id)
+    const initialSet = new Set(initialIds)
+    setActiveAccountIds(new Set(initialSet))
     setLastSubmittedParams({
       since: defaultRange.since,
       until: defaultRange.until,
       source: selectedDataSource,
-      timeIncrement: timeIncrement === 'daily' ? 1 : null,
-      breakdowns: breakdowns.trim() || undefined
+      timeIncrement,
+      breakdowns: undefined
     })
-  }, [
-    breakdowns,
-    defaultRange.since,
-    defaultRange.until,
-    lastSubmittedParams,
-    selectedAccountIds.size,
-    selectedDataSource,
-    timeIncrement
-  ])
+  }, [adAccounts, defaultRange.since, defaultRange.until, lastSubmittedParams, selectedDataSource, timeIncrement])
 
   useEffect(() => {
     if (selectedAccountIds.size === 0) {
       return
     }
+    if (areSetsEqual(activeAccountIds, selectedAccountIds)) {
+      return
+    }
     setActiveAccountIds(new Set(selectedAccountIds))
-  }, [selectedAccountIds])
+  }, [activeAccountIds, selectedAccountIds])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -782,8 +773,18 @@ const InsightsDataPage = () => {
       }
     }
 
-    return Array.from(grouped.values()).sort((a, b) => a.entityId.localeCompare(b.entityId))
-  }, [insights, getEntityId, getEntityName])
+    const sorted = Array.from(grouped.values()).sort((a, b) => {
+      if (resultLevel === 'account') {
+        const spendDiff = (b.metrics.spend ?? 0) - (a.metrics.spend ?? 0)
+        if (spendDiff !== 0) {
+          return spendDiff
+        }
+      }
+      return a.entityId.localeCompare(b.entityId)
+    })
+
+    return sorted
+  }, [getEntityId, getEntityName, insights, resultLevel])
 
   useEffect(() => {
     if (resultLevel === 'account' || aggregatedInsights.length === 0) {
@@ -814,23 +815,6 @@ const InsightsDataPage = () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [openDropdownLevel])
-
-  useEffect(() => {
-    if (!selectedAccountIds.size) {
-      return
-    }
-    setSelectedEntityIds(prev => {
-      if (areSetsEqual(prev.account, selectedAccountIds)) {
-        return prev
-      }
-      return {
-        account: new Set(selectedAccountIds),
-        campaign: new Set(prev.campaign),
-        adset: new Set(prev.adset),
-        ad: new Set(prev.ad)
-      }
-    })
-  }, [selectedAccountIds])
 
   const metricTimeline = useMemo(() => {
     const map = new Map<string, Record<MetricKey, Array<{ date: string; value: number }>>>()
@@ -938,25 +922,15 @@ const InsightsDataPage = () => {
           }
         } else {
           paginatedAggregatedInsights.forEach(entity => {
-            if (next.size > 1) {
-              next.delete(entity.entityId)
+            if (next.delete(entity.entityId)) {
               changed = true
             }
           })
-          if (next.size === 0 && paginatedAggregatedInsights.length > 0) {
-            next.add(paginatedAggregatedInsights[0].entityId)
-            message.warning('至少保留一个广告账号以便继续查询')
-          }
         }
         if (!changed) {
           return prev
         }
-        setSelectedEntityIds(prevIds => ({
-          account: new Set(next),
-          campaign: new Set(prevIds.campaign),
-          adset: new Set(prevIds.adset),
-          ad: new Set(prevIds.ad)
-        }))
+        syncAccountCheckboxes(next)
         return next
       })
       return
@@ -1245,6 +1219,9 @@ const InsightsDataPage = () => {
   }, [selectedEntityData])
 
   const accountBreadcrumbLabel = useMemo(() => {
+    if (activeLevel === 'account') {
+      return '全部账号（默认加载，可在列表中勾选账号）'
+    }
     if (activeAccountIds.size === 0) {
       return '未选择账号'
     }
@@ -1253,7 +1230,7 @@ const InsightsDataPage = () => {
       return adAccountNameMap.get(accountId) ?? accountId
     }
     return `已选 ${activeAccountIds.size} 个账号`
-  }, [activeAccountIds, adAccountNameMap])
+  }, [activeAccountIds, activeLevel, adAccountNameMap])
 
   const hasActiveSelection = useMemo(() => {
     const levelKeys: HierarchyLevel[] = ['campaign', 'adset', 'ad']
@@ -1337,8 +1314,8 @@ const InsightsDataPage = () => {
       since: sinceDate,
       until: untilDate,
       source: selectedDataSource,
-      timeIncrement: timeIncrement === 'daily' ? 1 : null,
-      breakdowns: breakdowns.trim() || undefined
+      timeIncrement,
+      breakdowns: undefined
     }
     setFormError(null)
     setSyncingEntityIds(new Set())
@@ -1434,22 +1411,13 @@ const InsightsDataPage = () => {
             changed = true
           }
         } else if (next.has(entityId)) {
-          if (next.size <= 1) {
-            message.warning('至少保留一个广告账号以便继续查询')
-            return prev
-          }
           next.delete(entityId)
           changed = true
         }
         if (!changed) {
           return prev
         }
-        setSelectedEntityIds(prevIds => ({
-          account: new Set(next),
-          campaign: new Set(prevIds.campaign),
-          adset: new Set(prevIds.adset),
-          ad: new Set(prevIds.ad)
-        }))
+        syncAccountCheckboxes(next)
         return next
       })
       return
@@ -1582,28 +1550,6 @@ const InsightsDataPage = () => {
               value={untilDate}
               onChange={event => setUntilDate(event.target.value)}
             />
-          </label>
-          <label className="form-label" style={{ flex: '1 1 180px' }}>
-            <span>时间粒度</span>
-            <select
-              className="input"
-              value={timeIncrement}
-              onChange={event => setTimeIncrement(event.target.value as typeof timeIncrement)}
-            >
-              <option value="daily">按日汇总（time_increment=1）</option>
-              <option value="aggregate">整体汇总（不分日）</option>
-            </select>
-          </label>
-          <label className="form-label" style={{ flex: '2 1 240px' }}>
-            <span>Breakdowns（可选）</span>
-            <input
-              className="input"
-              value={breakdowns}
-              onChange={event => setBreakdowns(event.target.value)}
-              placeholder="country, device_platform"
-              spellCheck={false}
-            />
-            <div className="form-hint">多个维度以逗号分隔，留空表示不拆分。</div>
           </label>
           <div className="form-label" style={{ flex: '2 1 320px' }}>
             <span>数据源</span>
@@ -2297,6 +2243,4 @@ const InsightsDataPage = () => {
     </div>
   )
 }
-
 export default InsightsDataPage
-
