@@ -1502,6 +1502,10 @@ const InsightsDataPage = () => {
     setIsModalOpen(true)
   }
 
+  const handleManageRules = useCallback((entityId: string) => {
+    message.info(`即将为 ${entityId} 配置托管规则`, 2)
+  }, [])
+
   const handleModalClose = () => {
     setIsModalOpen(false)
     setDetailEntityId(null)
@@ -1973,7 +1977,7 @@ const InsightsDataPage = () => {
                       {idColumnName}
                     </th>
                     <th style={{ width: '180px' }}>状态</th>
-                    <th style={{ width: '180px' }}>操作</th>
+                    <th style={{ width: '200px' }}>操作</th>
                     {visibleMetricColumns.map(column => (
                       <th
                         key={column.key}
@@ -2122,17 +2126,29 @@ const InsightsDataPage = () => {
                             </div>
                           )}
                         </td>
-                        <td style={{ width: '180px' }}>
+                        <td style={{ width: '200px' }}>
                           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                             <button
                               type="button"
                               className="button button--ghost"
+                              style={{ padding: '0.25rem 0.65rem', fontSize: '0.85rem' }}
                               onClick={event => {
                                 event.stopPropagation()
                                 handleDetailOpen(entity.entityId, entity.entityName)
                               }}
                             >
                               详情
+                            </button>
+                            <button
+                              type="button"
+                              className="button button--ghost"
+                              style={{ padding: '0.25rem 0.65rem', fontSize: '0.85rem' }}
+                              onClick={event => {
+                                event.stopPropagation()
+                                handleManageRules(entity.entityId)
+                              }}
+                            >
+                              托管
                             </button>
                           </div>
                         </td>
