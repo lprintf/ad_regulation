@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useRef, useCallback, useContext } from 'react'
+import type { CSSProperties } from 'react'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { Modal, message, ConfigProvider, Spin } from 'antd'
 import {
@@ -125,6 +126,12 @@ const sanitizeColumnWidths = (source: unknown): Record<MetricKey, number> => {
     }
   }
   return widths
+}
+
+const RESPONSIVE_CONTAINER_STYLE: CSSProperties = {
+  width: 'min(1200px, max(320px, calc(100vw - var(--sidebar-width, 260px) - 64px)))',
+  maxWidth: '100%',
+  margin: '0 auto'
 }
 
 const sanitizeVisibleMetrics = (keys: unknown, fallback: MetricKey[]): MetricKey[] => {
@@ -329,6 +336,7 @@ const InsightsDataPage = () => {
   const [columnOrder, setColumnOrder] = useState<MetricKey[]>(() => [...DEFAULT_COLUMN_ORDER])
   const [columnWidths, setColumnWidths] = useState<Record<MetricKey, number>>({ ...DEFAULT_COLUMN_WIDTHS })
   const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false)
+  const [isTableMenuOpen, setIsTableMenuOpen] = useState(false)
   const [selectedEntityIds, setSelectedEntityIds] = useState<Record<HierarchyLevel, Set<string>>>(() => createEmptySelectionMap())
   const [drillSelection, setDrillSelection] = useState<Record<HierarchyLevel, string | null>>({
     account: null,
@@ -347,6 +355,7 @@ const InsightsDataPage = () => {
     adset: null,
     ad: null
   })
+  const tableMenuRef = useRef<HTMLDivElement | null>(null)
   const [syncingEntityIds, setSyncingEntityIds] = useState<Set<string>>(() => new Set())
   const configContext = useContext(ConfigProvider.ConfigContext)
   const columnModalPrefix = useMemo(
@@ -575,6 +584,8 @@ const InsightsDataPage = () => {
   const syncedQueriesRef = useRef<Set<string>>(new Set())
   const entityAccountMapRef = useRef<Map<string, string>>(new Map())
   const headerCheckboxRef = useRef<HTMLInputElement | null>(null)
+  const checkboxHeaderCellRef = useRef<HTMLTableCellElement | null>(null)
+  const [accountColumnOffset, setAccountColumnOffset] = useState(80)
 
   // Derive the ID column name based on level
   const idColumnName = useMemo(() => {
@@ -843,6 +854,40 @@ const InsightsDataPage = () => {
     }
   }, [openDropdownLevel])
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!isTableMenuOpen) {
+        return
+      }
+      if (tableMenuRef.current?.contains(event.target as Node)) {
+        return
+      }
+      setIsTableMenuOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isTableMenuOpen])
+
+  const measureAccountColumnOffset = useCallback(() => {
+    if (!checkboxHeaderCellRef.current) {
+      setAccountColumnOffset(80)
+      return
+    }
+    const width = checkboxHeaderCellRef.current.getBoundingClientRect().width
+    setAccountColumnOffset(width)
+  }, [])
+
+  useEffect(() => {
+    measureAccountColumnOffset()
+    window.addEventListener('resize', measureAccountColumnOffset)
+    return () => {
+      window.removeEventListener('resize', measureAccountColumnOffset)
+    }
+  }, [measureAccountColumnOffset])
+
+
   const metricTimeline = useMemo(() => {
     const map = new Map<string, Record<MetricKey, Array<{ date: string; value: number }>>>()
     for (const record of insights) {
@@ -903,6 +948,39 @@ const InsightsDataPage = () => {
     [orderedColumns, visibleMetricKeys]
   )
 
+  const toggleTableMenu = useCallback(() => {
+    setIsTableMenuOpen(prev => !prev)
+  }, [])
+
+  const handleVisibleMetricToggle = useCallback(
+    (metricKey: MetricKey) => {
+      setVisibleMetricKeys(prev => {
+        const isVisible = prev.includes(metricKey)
+        if (isVisible) {
+          if (prev.length === 1) {
+            message.warning('至少保留 1 个指标列')
+            return prev
+          }
+          return prev.filter(key => key !== metricKey)
+        }
+        const next = [...prev, metricKey]
+        const ordered = columnOrder.filter(key => next.includes(key))
+        return ordered
+      })
+    },
+    [columnOrder]
+  )
+
+  const handleShowAllColumns = useCallback(() => {
+    setVisibleMetricKeys([...columnOrder])
+  }, [columnOrder])
+
+  const handleRestoreColumnDefaults = useCallback(() => {
+    setColumnOrder([...DEFAULT_COLUMN_ORDER])
+    setVisibleMetricKeys([...DEFAULT_VISIBLE_METRICS])
+    setColumnWidths({ ...DEFAULT_COLUMN_WIDTHS })
+  }, [])
+
   useEffect(() => {
     setCurrentPage(1)
   }, [aggregatedInsights])
@@ -919,6 +997,10 @@ const InsightsDataPage = () => {
     const startIndex = (currentPage - 1) * TABLE_PAGE_SIZE
     return aggregatedInsights.slice(startIndex, startIndex + TABLE_PAGE_SIZE)
   }, [aggregatedInsights, currentPage])
+
+  useEffect(() => {
+    measureAccountColumnOffset()
+  }, [measureAccountColumnOffset, paginatedAggregatedInsights.length, currentPage])
 
   const currentLevelSelection = selectedEntityIds[resultLevel] ?? new Set<string>()
   const isAllCurrentPageSelected =
@@ -1534,7 +1616,7 @@ const InsightsDataPage = () => {
 
   return (
     <div className="page">
-      <header className="page__header">
+      <header className="page__header" style={RESPONSIVE_CONTAINER_STYLE}>
         <div>
           <h1 className="page__title">洞察数据浏览</h1>
           <p className="page__subtitle">
@@ -1543,7 +1625,7 @@ const InsightsDataPage = () => {
         </div>
       </header>
 
-      <section className="card">
+      <section className="card" style={RESPONSIVE_CONTAINER_STYLE}>
         <div className="card__header">
           <div>
             <div className="card__title">筛选条件</div>
@@ -1602,7 +1684,7 @@ const InsightsDataPage = () => {
         </form>
       </section>
 
-      <section className="card" style={{ marginTop: '1.5rem' }}>
+      <section className="card" style={{ ...RESPONSIVE_CONTAINER_STYLE, marginTop: '1.5rem' }}>
         <div className="card__header">
           <div>
             <div className="card__title">洞察结果</div>
@@ -1675,6 +1757,66 @@ const InsightsDataPage = () => {
                 >
                   自定义列
                 </button>
+                <div ref={tableMenuRef} style={{ position: 'relative' }}>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    aria-label="更多表格操作"
+                    onClick={toggleTableMenu}
+                    style={{ width: '36px', padding: 0 }}
+                  >
+                    ⋮
+                  </button>
+                  {isTableMenuOpen && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        right: 0,
+                        top: '110%',
+                        minWidth: '220px',
+                        background: '#fff',
+                        border: '1px solid var(--color-border, #d9d9d9)',
+                        borderRadius: '8px',
+                        boxShadow: '0 6px 16px rgba(0,0,0,0.1)',
+                        padding: '12px',
+                        zIndex: 6
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, marginBottom: '8px' }}>显示指标</div>
+                      <div style={{ maxHeight: '200px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        {orderedColumns.map(column => (
+                          <label key={`menu-${column.key}`} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem' }}>
+                            <input
+                              type="checkbox"
+                              checked={visibleMetricKeys.includes(column.key)}
+                              onChange={() => handleVisibleMetricToggle(column.key)}
+                            />
+                            <span>{column.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <hr style={{ margin: '10px 0', borderColor: 'var(--color-border, #f0f0f0)' }} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                        <button type="button" className="button button--ghost" onClick={handleShowAllColumns}>
+                          显示全部列
+                        </button>
+                        <button type="button" className="button button--ghost" onClick={handleRestoreColumnDefaults}>
+                          恢复默认布局
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost"
+                          onClick={() => {
+                            setIsTableMenuOpen(false)
+                            setIsColumnPickerOpen(true)
+                          }}
+                        >
+                          打开列管理器
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <span style={{ color: 'var(--color-text-muted)' }}>
                   当前层级选中 {currentLevelSelection.size} 个
                 </span>
@@ -1796,11 +1938,12 @@ const InsightsDataPage = () => {
               )}
             </div>
 
-            <div className="table-wrapper">
+            <div className="table-wrapper" style={{ width: '100%', maxWidth: '100%', overflowX: 'auto' }}>
               <table className="table">
                 <thead>
                   <tr>
                     <th
+                      ref={checkboxHeaderCellRef}
                       style={{
                         width: '56px',
                         position: 'sticky',
@@ -1819,9 +1962,10 @@ const InsightsDataPage = () => {
                     </th>
                     <th
                       style={{
-                        minWidth: '320px',
+                        width: '260px',
+                        minWidth: '240px',
                         position: 'sticky',
-                        left: 56,
+                        left: accountColumnOffset,
                         zIndex: 1,
                         background: '#fff'
                       }}
@@ -1900,15 +2044,16 @@ const InsightsDataPage = () => {
                         </td>
                         <td
                           style={{
-                            minWidth: '320px',
+                            width: '260px',
+                            minWidth: '240px',
                             position: 'sticky',
-                            left: 56,
+                            left: accountColumnOffset,
                             zIndex: 1,
                             background: '#fff'
                           }}
-                          title={entity.entityId}
+                          title={`${displayNameText ?? ''} ${entity.entityId}`}
                         >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
                             {showAvatar && (
                               <div
                                 style={{
@@ -1925,16 +2070,28 @@ const InsightsDataPage = () => {
                                 {(displayNameText && displayNameText.charAt(0)) || entity.entityId.slice(-2)}
                               </div>
                             )}
-                            <div>
+                            <div style={{ minWidth: 0 }}>
                               <div
                                 style={{
                                   fontWeight: entity.entityName ? 600 : 400,
-                                  color: entity.entityName ? 'inherit' : 'var(--color-text-muted)'
+                                  color: entity.entityName ? 'inherit' : 'var(--color-text-muted)',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis'
                                 }}
                               >
                                 {nameCell}
                               </div>
-                              <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                              <div
+                                style={{
+                                  fontFamily: 'monospace',
+                                  fontSize: '0.85rem',
+                                  color: 'var(--color-text-muted)',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis'
+                                }}
+                              >
                                 {entity.entityId}
                               </div>
                               <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
@@ -2231,7 +2388,7 @@ const InsightsDataPage = () => {
 
             <section>
               <h3 style={{ marginBottom: '12px' }}>每日表现</h3>
-              <div className="table-wrapper" style={{ maxHeight: '420px', overflow: 'auto' }}>
+              <div className="table-wrapper" style={{ width: '100%', maxWidth: '100%', maxHeight: '420px', overflow: 'auto' }}>
                 <table className="table">
                   <thead>
                     <tr>
