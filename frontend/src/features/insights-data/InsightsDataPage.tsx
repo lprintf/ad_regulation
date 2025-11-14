@@ -289,6 +289,18 @@ const areSetsEqual = (a: Set<string>, b: Set<string>) => {
   return true
 }
 
+const areArraysEqual = <T,>(a: T[], b: T[]) => {
+  if (a.length !== b.length) {
+    return false
+  }
+  for (let idx = 0; idx < a.length; idx += 1) {
+    if (a[idx] !== b[idx]) {
+      return false
+    }
+  }
+  return true
+}
+
 const getDefaultDateRange = () => {
   const today = new Date()
   const until = new Date(today.getTime() - 3 * 24 * 60 * 60 * 1000)
@@ -793,9 +805,14 @@ const InsightsDataPage = () => {
     const optionLevel = resultLevel as Exclude<HierarchyLevel, 'account'>
     const nextOptions = Array.from(new Set(aggregatedInsights.map(entity => entity.entityId)))
     setDrillOptions(prev => {
-      const updated = { ...prev }
-      updated[optionLevel] = nextOptions
-      return updated
+      const currentOptions = prev[optionLevel]
+      if (areArraysEqual(currentOptions, nextOptions)) {
+        return prev
+      }
+      return {
+        ...prev,
+        [optionLevel]: nextOptions
+      }
     })
   }, [aggregatedInsights, resultLevel])
 
