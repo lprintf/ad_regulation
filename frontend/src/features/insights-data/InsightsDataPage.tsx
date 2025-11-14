@@ -1548,7 +1548,7 @@ const InsightsDataPage = () => {
           <div>
             <div className="card__title">筛选条件</div>
             <div className="card__subtitle">
-              选择广告账号与时间区间，查询后可在结果区域切换账号 / 广告系列 / 广告组 / 广告四级数据，并查看日级表现。
+              选择时间区间，查询后可在结果区域切换账号 / 广告系列 / 广告组 / 广告四级数据，并查看日级表现。
             </div>
           </div>
         </div>
@@ -1557,13 +1557,7 @@ const InsightsDataPage = () => {
           className="card__body"
           style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}
         >
-          <div className="form-label" style={{ flex: '1 1 260px' }}>
-            <span>广告账号</span>
-            <div className="form-hint">
-              账号默认在下方列表中勾选，最多 9 个，至少选择 1 个账号才能查看下级数据。
-            </div>
-          </div>
-          <label className="form-label" style={{ flex: '1 1 160px' }}>
+          <label className="form-label" style={{ flex: '0 1 140px' }}>
             <span>起始日期</span>
             <input
               type="date"
@@ -1572,7 +1566,7 @@ const InsightsDataPage = () => {
               onChange={event => setSinceDate(event.target.value)}
             />
           </label>
-          <label className="form-label" style={{ flex: '1 1 160px' }}>
+          <label className="form-label" style={{ flex: '0 1 140px' }}>
             <span>结束日期</span>
             <input
               type="date"
@@ -1581,8 +1575,10 @@ const InsightsDataPage = () => {
               onChange={event => setUntilDate(event.target.value)}
             />
           </label>
-          <div className="form-label" style={{ flex: '2 1 320px' }}>
-            <span>数据源</span>
+          <div className="form-label" style={{ flex: '0 1 220px' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+              数据源
+            </span>
             <select
               className="input"
               value={selectedDataSource}
@@ -1593,9 +1589,6 @@ const InsightsDataPage = () => {
               <option value="realtime">仅实时</option>
               <option value="hybrid">混合（后端接口）</option>
             </select>
-            <div className="form-hint">
-              默认混合模式：前端先请求数据库数据，再调用 from-last 实时补齐并在浏览器端合并；末项“混合（后端）”才会走新的 `/insights/query/hybrid`。
-            </div>
           </div>
 
           {formError && (
