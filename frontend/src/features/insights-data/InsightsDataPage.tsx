@@ -397,6 +397,10 @@ const InsightsDataPage = () => {
 
   useEffect(() => {
     if (selectedAccountIds.size === 0) {
+      if (activeAccountIds.size === 0) {
+        return
+      }
+      setActiveAccountIds(new Set())
       return
     }
     if (areSetsEqual(activeAccountIds, selectedAccountIds)) {
@@ -404,6 +408,12 @@ const InsightsDataPage = () => {
     }
     setActiveAccountIds(new Set(selectedAccountIds))
   }, [activeAccountIds, selectedAccountIds])
+
+  useEffect(() => {
+    if (activeAccountIds.size === 0 && activeLevel !== 'account') {
+      setActiveLevel('account')
+    }
+  }, [activeAccountIds, activeLevel])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1357,6 +1367,9 @@ const InsightsDataPage = () => {
   }
 
   const handleLevelChange = (nextLevel: HierarchyLevel) => {
+    if (nextLevel !== 'account' && activeAccountIds.size === 0) {
+      return
+    }
     setActiveLevel(nextLevel)
     setCurrentPage(1)
     setDrillSelection(prev => {
@@ -1634,6 +1647,8 @@ const InsightsDataPage = () => {
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 {HIERARCHY_LEVELS.map(levelKey => {
                   const isActiveTab = resultLevel === levelKey
+                  const isLevelDisabled =
+                    !lastSubmittedParams || (levelKey !== 'account' && activeAccountIds.size === 0)
                   return (
                     <button
                       type="button"
@@ -1647,11 +1662,11 @@ const InsightsDataPage = () => {
                           : '1px solid var(--color-border, #d9d9d9)',
                         backgroundColor: isActiveTab ? 'var(--color-primary, #1677ff)' : 'transparent',
                         color: isActiveTab ? '#fff' : 'inherit',
-                        cursor: !lastSubmittedParams ? 'not-allowed' : 'pointer',
-                        opacity: !lastSubmittedParams && !isActiveTab ? 0.5 : 1
+                        cursor: isLevelDisabled ? 'not-allowed' : 'pointer',
+                        opacity: isLevelDisabled && !isActiveTab ? 0.5 : 1
                       }}
                       onClick={() => handleLevelChange(levelKey)}
-                      disabled={!lastSubmittedParams}
+                      disabled={isLevelDisabled}
                     >
                       {LEVEL_LABELS[levelKey]}
                     </button>
