@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect, useRef, useCallback, useContext } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { Modal, message, ConfigProvider, Spin } from 'antd'
 import {
   fetchInsightsData,
@@ -7,8 +7,8 @@ import {
   type InsightsDataQuery,
   type SyncedEntityName
 } from '../../api/insights'
+import { fetchAdAccounts } from '../../api/adAccounts'
 import type { InsightRecord, InsightsDataResponse } from '../../types/insights'
-import AdAccountSelect from '../../components/AdAccountSelect'
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0
@@ -54,6 +54,7 @@ const METRIC_COLUMN_MAP = METRIC_COLUMNS.reduce<Record<MetricKey, (typeof METRIC
 )
 
 const MAX_TOOLTIP_POINTS = 14
+const MAX_SELECTED_ACCOUNTS = 9
 
 type MetricKey = (typeof METRIC_COLUMNS)[number]['key']
 
@@ -228,7 +229,6 @@ const getStatusColor = (status: string | null) => {
 }
 
 interface SubmittedParams {
-  accountId: string
   since: string
   until: string
   source: InsightsDataQuery['source']
@@ -246,6 +246,7 @@ const createEmptySelectionMap = (): Record<HierarchyLevel, Set<string>> => ({
 interface AggregatedEntityRow {
   entityId: string
   entityName: string | null
+  accountId: string | null
   dateCount: number
   metrics: Record<MetricKey, number>
   startDate: string
@@ -275,20 +276,16 @@ const chunkArray = <T,>(items: T[], chunkSize: number): T[][] => {
   return chunks
 }
 
-const areQueriesEqual = (a: InsightsDataQuery, b: InsightsDataQuery) => {
-  const normalizeList = (items?: string[]) => (items ? [...items].sort().join('|') : '')
-  return (
-    a.accountId === b.accountId &&
-    a.since === b.since &&
-    a.until === b.until &&
-    (a.level ?? 'ad') === (b.level ?? 'ad') &&
-    (a.timeIncrement ?? null) === (b.timeIncrement ?? null) &&
-    (a.breakdowns ?? '') === (b.breakdowns ?? '') &&
-    a.source === b.source &&
-    normalizeList(a.fields) === normalizeList(b.fields) &&
-    (a.objectLevel ?? null) === (b.objectLevel ?? null) &&
-    normalizeList(a.objectIds) === normalizeList(b.objectIds)
-  )
+const areSetsEqual = (a: Set<string>, b: Set<string>) => {
+  if (a.size !== b.size) {
+    return false
+  }
+  for (const value of a) {
+    if (!b.has(value)) {
+      return false
+    }
+  }
+  return true
 }
 
 const getDefaultDateRange = () => {
@@ -300,18 +297,9 @@ const getDefaultDateRange = () => {
   return { since: format(since), until: format(until) }
 }
 
-const normalizeAccountId = (value: string): string => {
-  const trimmed = value.trim()
-  if (!trimmed) {
-    return ''
-  }
-  return trimmed.startsWith('act_') ? trimmed : `act_${trimmed.replace(/^act_/i, '')}`
-}
-
 const InsightsDataPage = () => {
   const queryClient = useQueryClient()
   const defaultRange = useMemo(getDefaultDateRange, [])
-  const [accountInput, setAccountInput] = useState('')
   const [sinceDate, setSinceDate] = useState(defaultRange.since)
   const [untilDate, setUntilDate] = useState(defaultRange.until)
   const [timeIncrement, setTimeIncrement] = useState<'daily' | 'aggregate'>('daily')
@@ -319,11 +307,8 @@ const InsightsDataPage = () => {
   const [selectedDataSource, setSelectedDataSource] =
     useState<InsightsDataQuery['source']>('frontend-hybrid')
   const [formError, setFormError] = useState<string | null>(null)
-  const [selectedAccountName, setSelectedAccountName] = useState<string | null>(null)
-  const [submittedAccountName, setSubmittedAccountName] = useState<string | null>(null)
-  const [activeLevel, setActiveLevel] = useState<HierarchyLevel>('campaign')
+  const [activeLevel, setActiveLevel] = useState<HierarchyLevel>('account')
   const [lastSubmittedParams, setLastSubmittedParams] = useState<SubmittedParams | null>(null)
-  const [activeQuery, setActiveQuery] = useState<InsightsDataQuery | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [detailEntityId, setDetailEntityId] = useState<string | null>(null)
   const [detailEntityName, setDetailEntityName] = useState<string | null>(null)
@@ -356,6 +341,66 @@ const InsightsDataPage = () => {
     () => (configContext?.getPrefixCls ? configContext.getPrefixCls('insights-column-picker') : 'insights-column-picker'),
     [configContext]
   )
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(() => new Set())
+  const [activeAccountIds, setActiveAccountIds] = useState<Set<string>>(() => new Set())
+  const {
+    data: adAccounts = [],
+    isLoading: isLoadingAccounts,
+    isError: isAdAccountError
+  } = useQuery({
+    queryKey: ['insights', 'ad-accounts'],
+    queryFn: fetchAdAccounts,
+    staleTime: 5 * 60_000
+  })
+  const adAccountNameMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const account of adAccounts) {
+      map.set(account.id, account.name ?? account.id)
+    }
+    return map
+  }, [adAccounts])
+  useEffect(() => {
+    if (!adAccounts.length) {
+      return
+    }
+    setSelectedAccountIds(prev => {
+      if (prev.size > 0) {
+        return prev
+      }
+      const initialIds = adAccounts.slice(0, MAX_SELECTED_ACCOUNTS).map(account => account.id)
+      const initialSet = new Set(initialIds)
+      setActiveAccountIds(current => (current.size > 0 ? current : initialSet))
+      return initialSet
+    })
+  }, [adAccounts])
+
+  useEffect(() => {
+    if (lastSubmittedParams || selectedAccountIds.size === 0) {
+      return
+    }
+    setLastSubmittedParams({
+      since: defaultRange.since,
+      until: defaultRange.until,
+      source: selectedDataSource,
+      timeIncrement: timeIncrement === 'daily' ? 1 : null,
+      breakdowns: breakdowns.trim() || undefined
+    })
+  }, [
+    breakdowns,
+    defaultRange.since,
+    defaultRange.until,
+    lastSubmittedParams,
+    selectedAccountIds.size,
+    selectedDataSource,
+    timeIncrement
+  ])
+
+  useEffect(() => {
+    if (selectedAccountIds.size === 0) {
+      return
+    }
+    setActiveAccountIds(new Set(selectedAccountIds))
+  }, [selectedAccountIds])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -470,25 +515,38 @@ const InsightsDataPage = () => {
 
   const buildQueryForLevel = useCallback(
     (
+      accountId: string,
       targetLevel: HierarchyLevel,
-      baseOverride?: SubmittedParams | null,
       forcedFilter?: { level: Exclude<HierarchyLevel, 'account'>; ids: string[] } | null
     ): InsightsDataQuery | null => {
-      const base = baseOverride ?? lastSubmittedParams
-      if (!base) {
+      if (!lastSubmittedParams) {
         return null
       }
-      const filter =
+      const baseFilter =
         forcedFilter === undefined ? resolveObjectFilter(targetLevel) : forcedFilter
-      const shouldRequestRealtimeFields = base.source !== 'database'
+      let filter = baseFilter ?? null
+      if (filter) {
+        const filteredIds = filter.ids.filter(
+          id => entityAccountMapRef.current.get(id) === accountId
+        )
+        if (filteredIds.length === 0) {
+          filter = null
+        } else {
+          filter = {
+            level: filter.level,
+            ids: filteredIds
+          }
+        }
+      }
+      const shouldRequestRealtimeFields = lastSubmittedParams.source !== 'database'
       return {
-        accountId: base.accountId,
-        since: base.since,
-        until: base.until,
+        accountId,
+        since: lastSubmittedParams.since,
+        until: lastSubmittedParams.until,
         level: targetLevel,
-        timeIncrement: base.timeIncrement,
-        breakdowns: base.breakdowns,
-        source: base.source,
+        timeIncrement: lastSubmittedParams.timeIncrement,
+        breakdowns: lastSubmittedParams.breakdowns,
+        source: lastSubmittedParams.source,
         fields: shouldRequestRealtimeFields ? [...REALTIME_ENTITY_FIELDS] : undefined,
         objectLevel: filter?.level,
         objectIds: filter?.ids
@@ -498,10 +556,11 @@ const InsightsDataPage = () => {
   )
 
   // The level of the currently displayed dataset.
-  const resultLevel = (activeQuery?.level ?? activeLevel) as HierarchyLevel
+  const resultLevel = activeLevel
 
   // Track which queries have had their entity names synced to prevent duplicate syncing
   const syncedQueriesRef = useRef<Set<string>>(new Set())
+  const entityAccountMapRef = useRef<Map<string, string>>(new Map())
   const headerCheckboxRef = useRef<HTMLInputElement | null>(null)
 
   // Derive the ID column name based on level
@@ -519,31 +578,21 @@ const InsightsDataPage = () => {
   }, [resultLevel])
 
   // Function to get the correct ID and name from a record based on level
-  const normalizedSubmittedAccountId = useMemo(() => {
-    if (!activeQuery?.accountId) {
-      return null
+  const getEntityId = useCallback((record: InsightRecord) => {
+    if (record.adId) {
+      return record.adId
     }
-    return activeQuery.accountId.replace(/^act_/, '')
-  }, [activeQuery?.accountId])
-
-  const getEntityId = useCallback(
-    (record: InsightRecord) => {
-      if (record.adId) {
-        return record.adId
-      }
-      if (record.adsetId) {
-        return record.adsetId
-      }
-      if (record.campaignId) {
-        return record.campaignId
-      }
-      if (record.adAccountId) {
-        return record.adAccountId
-      }
-      return activeQuery?.accountId ?? ''
-    },
-    [activeQuery?.accountId]
-  )
+    if (record.adsetId) {
+      return record.adsetId
+    }
+    if (record.campaignId) {
+      return record.campaignId
+    }
+    if (record.adAccountId) {
+      return record.adAccountId
+    }
+    return ''
+  }, [])
 
   const getEntityName = useCallback(
     (record: InsightRecord): string | null => {
@@ -557,40 +606,95 @@ const InsightsDataPage = () => {
         return record.campaignName
       }
       if (resultLevel === 'account') {
-        const accountIdentifier = record.adAccountId ?? record.adId ?? ''
-        const recordAccountId = accountIdentifier.replace(/^act_/, '')
-        if (
-          normalizedSubmittedAccountId &&
-          recordAccountId === normalizedSubmittedAccountId &&
-          submittedAccountName
-        ) {
-          return submittedAccountName
-        }
-        return submittedAccountName ?? record.adName ?? null
+        const accountId = record.adAccountId ?? ''
+        return adAccountNameMap.get(accountId) ?? accountId ?? null
       }
       return null
     },
-    [resultLevel, normalizedSubmittedAccountId, submittedAccountName]
+    [adAccountNameMap, resultLevel]
   )
 
-  const queryResult = useQuery({
-    queryKey: ['insights-data', activeQuery],
-    queryFn: () => {
-      if (!activeQuery) {
-        throw new Error('Missing query parameters')
+  const objectFilterKey = useMemo(() => {
+    const parentLevels: Array<Exclude<HierarchyLevel, 'account'>> = ['campaign', 'adset', 'ad']
+    const entries = parentLevels
+      .map(level => `${level}:${Array.from(selectedEntityIds[level]).sort().join('|')}`)
+      .join(';')
+    return entries
+  }, [selectedEntityIds])
+
+  const accountsToQuery = useMemo(() => {
+    if (activeLevel === 'account') {
+      return adAccounts.map(account => account.id)
+    }
+    const source =
+      activeAccountIds.size > 0
+        ? activeAccountIds
+        : selectedAccountIds.size > 0
+          ? selectedAccountIds
+          : new Set(adAccounts.slice(0, MAX_SELECTED_ACCOUNTS).map(account => account.id))
+    return Array.from(source)
+  }, [activeAccountIds, activeLevel, adAccounts, selectedAccountIds])
+
+  const accountSelectionKey = useMemo(
+    () => accountsToQuery.join(','),
+    [accountsToQuery]
+  )
+
+  const accountQueries = useQueries({
+    queries: accountsToQuery.map(accountId => ({
+      queryKey: [
+        'insights-data',
+        accountId,
+        activeLevel,
+        lastSubmittedParams?.since ?? '',
+        lastSubmittedParams?.until ?? '',
+        lastSubmittedParams?.source ?? 'database',
+        lastSubmittedParams?.timeIncrement ?? 'null',
+        lastSubmittedParams?.breakdowns ?? '',
+        objectFilterKey
+      ],
+      enabled: Boolean(lastSubmittedParams),
+      queryFn: async () => {
+        const query = buildQueryForLevel(accountId, activeLevel)
+        if (!query) {
+          return {
+            insights: [],
+            totalRecords: 0,
+            dateRange: {
+              since: lastSubmittedParams?.since ?? '',
+              until: lastSubmittedParams?.until ?? ''
+            }
+          } satisfies InsightsDataResponse
+        }
+        return fetchInsightsData(query)
       }
-      return fetchInsightsData(activeQuery)
-    },
-    enabled: Boolean(activeQuery)
+    }))
   })
-  const { refetch: refetchInsights } = queryResult
+
+  const accountQueryEntries = useMemo(
+    () =>
+      accountsToQuery.map((accountId, index) => ({
+        accountId,
+        query: accountQueries[index]
+      })),
+    [accountQueries, accountsToQuery]
+  )
+
+  const refetchInsights = useCallback(() => {
+    accountQueryEntries.forEach(entry => {
+      if (entry.query?.refetch) {
+        void entry.query.refetch()
+      }
+    })
+  }, [accountQueryEntries])
 
   const insights: InsightRecord[] = useMemo(() => {
-    if (!queryResult.data?.insights) {
+    if (!accountQueryEntries.length) {
       return []
     }
-    return [...queryResult.data.insights].sort((a, b) => a.date.localeCompare(b.date))
-  }, [queryResult.data?.insights])
+    const merged = accountQueryEntries.flatMap(entry => entry.query.data?.insights ?? [])
+    return merged.sort((a, b) => a.date.localeCompare(b.date))
+  }, [accountQueryEntries])
 
   const totals = useMemo(() => {
     if (insights.length === 0) {
@@ -613,8 +717,11 @@ const InsightsDataPage = () => {
   // Aggregate insights by entity ID (one row per ID)
   const aggregatedInsights = useMemo<AggregatedEntityRow[]>(() => {
     if (insights.length === 0) {
+      entityAccountMapRef.current.clear()
       return []
     }
+
+    entityAccountMapRef.current.clear()
 
     const createMetricBucket = () =>
       METRIC_COLUMNS.reduce<Record<MetricKey, number>>((acc, col) => {
@@ -634,6 +741,7 @@ const InsightsDataPage = () => {
         grouped.set(entityId, {
           entityId,
           entityName: getEntityName(record),
+          accountId: record.adAccountId ?? null,
           dateCount: 0,
           metrics: createMetricBucket(),
           startDate: record.date,
@@ -660,11 +768,17 @@ const InsightsDataPage = () => {
       if (!entity.effectiveStatus && record.effectiveStatus) {
         entity.effectiveStatus = record.effectiveStatus
       }
+      if (!entity.accountId && record.adAccountId) {
+        entity.accountId = record.adAccountId
+      }
       if (record.date < entity.startDate) {
         entity.startDate = record.date
       }
       if (record.date > entity.endDate) {
         entity.endDate = record.date
+      }
+      if (entity.accountId) {
+        entityAccountMapRef.current.set(entityId, entity.accountId)
       }
     }
 
@@ -700,6 +814,23 @@ const InsightsDataPage = () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [openDropdownLevel])
+
+  useEffect(() => {
+    if (!selectedAccountIds.size) {
+      return
+    }
+    setSelectedEntityIds(prev => {
+      if (areSetsEqual(prev.account, selectedAccountIds)) {
+        return prev
+      }
+      return {
+        account: new Set(selectedAccountIds),
+        campaign: new Set(prev.campaign),
+        adset: new Set(prev.adset),
+        ad: new Set(prev.ad)
+      }
+    })
+  }, [selectedAccountIds])
 
   const metricTimeline = useMemo(() => {
     const map = new Map<string, Record<MetricKey, Array<{ date: string; value: number }>>>()
@@ -788,6 +919,49 @@ const InsightsDataPage = () => {
 
   const handleSelectAllChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const { checked } = event.target
+
+    if (resultLevel === 'account') {
+      setSelectedAccountIds(prev => {
+        const next = new Set(prev)
+        let changed = false
+        if (checked) {
+          for (const entity of paginatedAggregatedInsights) {
+            if (next.has(entity.entityId)) {
+              continue
+            }
+            if (next.size >= MAX_SELECTED_ACCOUNTS) {
+              message.warning(`最多只能选择 ${MAX_SELECTED_ACCOUNTS} 个广告账号`)
+              break
+            }
+            next.add(entity.entityId)
+            changed = true
+          }
+        } else {
+          paginatedAggregatedInsights.forEach(entity => {
+            if (next.size > 1) {
+              next.delete(entity.entityId)
+              changed = true
+            }
+          })
+          if (next.size === 0 && paginatedAggregatedInsights.length > 0) {
+            next.add(paginatedAggregatedInsights[0].entityId)
+            message.warning('至少保留一个广告账号以便继续查询')
+          }
+        }
+        if (!changed) {
+          return prev
+        }
+        setSelectedEntityIds(prevIds => ({
+          account: new Set(next),
+          campaign: new Set(prevIds.campaign),
+          adset: new Set(prevIds.adset),
+          ad: new Set(prevIds.ad)
+        }))
+        return next
+      })
+      return
+    }
+
     setSelectedEntityIds(prev => {
       const updated: Record<HierarchyLevel, Set<string>> = {
         account: new Set(prev.account),
@@ -810,13 +984,23 @@ const InsightsDataPage = () => {
   }, [isAllCurrentPageSelected, hasAnyCurrentPageSelected])
 
   const applySyncedNamesToCache = useCallback(
-    (entities: SyncedEntityName[]) => {
-      if (!entities.length || !activeQuery) {
+    (accountId: string, entities: SyncedEntityName[]) => {
+      if (!entities.length || !lastSubmittedParams) {
         return
       }
 
-      const currentQuery = activeQuery
-      const queryKey = ['insights-data', currentQuery] as const
+      const queryKey = [
+        'insights-data',
+        accountId,
+        resultLevel,
+        lastSubmittedParams.since,
+        lastSubmittedParams.until,
+        lastSubmittedParams.source,
+        lastSubmittedParams.timeIncrement ?? 'null',
+        lastSubmittedParams.breakdowns ?? '',
+        objectFilterKey
+      ] as const
+
       const detailMap = new Map<
         string,
         { name: string | null; configuredStatus: string | null; effectiveStatus: string | null }
@@ -844,7 +1028,7 @@ const InsightsDataPage = () => {
 
           const details = detailMap.get(entityId)!
 
-          if (currentQuery.level === 'adset') {
+          if (resultLevel === 'adset') {
             return {
               ...record,
               adsetName: details.name ?? record.adsetName,
@@ -852,7 +1036,7 @@ const InsightsDataPage = () => {
               effectiveStatus: details.effectiveStatus ?? record.effectiveStatus
             }
           }
-          if (currentQuery.level === 'campaign') {
+          if (resultLevel === 'campaign') {
             return {
               ...record,
               campaignName: details.name ?? record.campaignName,
@@ -874,53 +1058,49 @@ const InsightsDataPage = () => {
         }
       })
     },
-    [activeQuery, queryClient, getEntityId]
+    [getEntityId, lastSubmittedParams, objectFilterKey, queryClient, resultLevel]
   )
 
-  // Auto-sync entity names when insights data loads
   useEffect(() => {
-    console.log('[Entity Sync] useEffect triggered', {
-      insightsLength: insights.length,
-      activeQuery,
-      level: activeQuery?.level ?? activeLevel
-    })
-
-    // Only run when we have insights data and an active query
-    if (!insights.length || !activeQuery || activeQuery.level === 'account') {
-      console.log('[Entity Sync] Skipping - missing insights/query or unsupported level')
+    if (!lastSubmittedParams || resultLevel === 'account') {
       return
     }
 
-    // Create a unique key for this query to track if we've already synced it
-    const queryKey = `${activeQuery.accountId}-${activeQuery.level}-${activeQuery.since}-${activeQuery.until}-${activeQuery.source}-${activeQuery.objectLevel ?? 'none'}-${(activeQuery.objectIds ?? []).join(',')}`
-    console.log('[Entity Sync] Query key:', queryKey)
-
-    // Skip if we've already synced this query
-    if (syncedQueriesRef.current.has(queryKey)) {
-      console.log('[Entity Sync] Skipping - already synced this query')
-      return
-    }
-
-    // Find entities without names
-    const unnamedEntityIds = new Set<string>()
-    for (const record of insights) {
-      const entityId = getEntityId(record)
-      const entityName = getEntityName(record)
-      if (!entityName && entityId) {
-        unnamedEntityIds.add(entityId)
+    accountQueryEntries.forEach(entry => {
+      const accountId = entry.accountId
+      const queryData = entry.query?.data
+      if (!queryData?.insights?.length) {
+        return
       }
-    }
 
-    console.log('[Entity Sync] Found unnamed entities:', unnamedEntityIds.size, Array.from(unnamedEntityIds))
+      const queryKey = `${accountId}-${resultLevel}-${lastSubmittedParams.since}-${lastSubmittedParams.until}-${lastSubmittedParams.source}-${objectFilterKey}`
+      if (syncedQueriesRef.current.has(queryKey)) {
+        return
+      }
 
-    // If there are unnamed entities, sync them
-    if (unnamedEntityIds.size > 0) {
-      // Mark this query as synced immediately to prevent duplicate requests
+      const unnamedEntityIds = new Set<string>()
+      for (const record of queryData.insights) {
+        const entityId = getEntityId(record)
+        const entityName = getEntityName(record)
+        if (!entityName && entityId) {
+          unnamedEntityIds.add(entityId)
+        }
+      }
+
+      if (unnamedEntityIds.size === 0) {
+        return
+      }
+
       syncedQueriesRef.current.add(queryKey)
-      console.log('[Entity Sync] Starting sync...')
-
       const pendingIds = Array.from(unnamedEntityIds)
       updateSyncingEntities(pendingIds, 'add')
+
+      const requestedEntityType =
+        resultLevel === 'campaign'
+          ? 'campaign'
+          : resultLevel === 'adset'
+            ? 'adset'
+            : 'ad'
 
       const syncNames = async () => {
         const entityIdBatches = chunkArray(pendingIds, ENTITY_NAME_SYNC_BATCH_SIZE)
@@ -930,35 +1110,27 @@ const InsightsDataPage = () => {
           rateLimited: 0,
           entities: [] as SyncedEntityName[]
         }
-        const requestedEntityType =
-          activeQuery.level === 'campaign'
-            ? 'campaign'
-            : activeQuery.level === 'adset'
-              ? 'adset'
-              : 'ad'
 
         try {
           for (let idx = 0; idx < entityIdBatches.length; idx += 1) {
             const batchIds = entityIdBatches[idx]
             message.loading({
               content: `正在获取名称 ${idx + 1}/${entityIdBatches.length}（${batchIds.length} 个实体）...`,
-              key: 'sync'
+              key: `sync-${accountId}`
             })
 
             const result = await syncEntityNames({
-              adAccountId: activeQuery.accountId,
+              adAccountId: accountId,
               entityIds: batchIds,
               entityType: requestedEntityType
             })
-
-            console.log(`[Entity Sync] Batch ${idx + 1} result:`, result)
 
             aggregateResult.synced += result.synced
             aggregateResult.failed += result.failed
             aggregateResult.rateLimited += result.rateLimited
             if (result.entities.length > 0) {
               aggregateResult.entities.push(...result.entities)
-              applySyncedNamesToCache(result.entities)
+              applySyncedNamesToCache(accountId, result.entities)
             }
 
             if (result.rateLimited > 0) {
@@ -969,65 +1141,54 @@ const InsightsDataPage = () => {
           if (aggregateResult.rateLimited > 0) {
             message.warning({
               content: `同步受到速率限制 (成功: ${aggregateResult.synced}, 失败: ${aggregateResult.failed}, 限制: ${aggregateResult.rateLimited})。请稍后再试。`,
-              key: 'sync',
+              key: `sync-${accountId}`,
               duration: 5
             })
-            // Allow retry later
-            syncedQueriesRef.current.delete(queryKey)
-            updateSyncingEntities(pendingIds, 'remove')
             return
           }
 
           if (aggregateResult.failed > 0 && aggregateResult.synced === 0) {
             message.error({
-              content: `同步失败。所有 ${aggregateResult.failed} 个请求都失败了。请检查网络连接或稍后再试。`,
-              key: 'sync',
+              content: `同步失败。所有 ${aggregateResult.failed} 个请求都失败了。请稍后再试。`,
+              key: `sync-${accountId}`,
               duration: 5
             })
-            // Remove from synced set on complete failure so it can be retried
-            syncedQueriesRef.current.delete(queryKey)
-            updateSyncingEntities(pendingIds, 'remove')
             return
           }
 
           if (aggregateResult.synced > 0) {
-            const successMsg = aggregateResult.failed > 0
-              ? `部分同步成功 (成功: ${aggregateResult.synced}, 失败: ${aggregateResult.failed})`
-              : `实体名称同步完成 (成功: ${aggregateResult.synced})`
+            const successMsg =
+              aggregateResult.failed > 0
+                ? `部分同步成功 (成功: ${aggregateResult.synced}, 失败: ${aggregateResult.failed})`
+                : `实体名称同步完成 (成功: ${aggregateResult.synced})`
 
             message.success({
               content: successMsg,
-              key: 'sync',
+              key: `sync-${accountId}`,
               duration: 3
             })
-
-            // If some entities failed, remove from synced set to allow retry
-            if (aggregateResult.failed > 0) {
-              syncedQueriesRef.current.delete(queryKey)
-            }
-
-            // Invalidate cache and refetch insights to get updated names
-            await queryClient.invalidateQueries({ queryKey: ['insights-data', activeQuery] })
-            void refetchInsights()
-            updateSyncingEntities(pendingIds, 'remove')
-          }
-          if (aggregateResult.synced === 0 && aggregateResult.failed === 0 && aggregateResult.rateLimited === 0) {
-            updateSyncingEntities(pendingIds, 'remove')
           }
         } catch (error) {
           console.error('[Entity Sync] Sync failed:', error)
-          message.error({ content: '同步实体名称失败', key: 'sync', duration: 3 })
-          // Remove from synced set on error so it can be retried
+          message.error({ content: '同步实体名称失败', key: `sync-${accountId}`, duration: 3 })
+        } finally {
           syncedQueriesRef.current.delete(queryKey)
           updateSyncingEntities(pendingIds, 'remove')
         }
       }
 
       syncNames()
-    } else {
-      console.log('[Entity Sync] No unnamed entities found')
-    }
-  }, [insights, activeQuery, activeLevel, getEntityId, getEntityName, queryClient, refetchInsights, applySyncedNamesToCache, updateSyncingEntities])
+    })
+  }, [
+    accountQueryEntries,
+    applySyncedNamesToCache,
+    getEntityId,
+    getEntityName,
+    lastSubmittedParams,
+    objectFilterKey,
+    resultLevel,
+    updateSyncingEntities
+  ])
 
   // Get historical data for selected entity
   const selectedEntityData = useMemo(() => {
@@ -1083,10 +1244,16 @@ const InsightsDataPage = () => {
     }))
   }, [selectedEntityData])
 
-  const accountBreadcrumbLabel = useMemo(
-    () => submittedAccountName ?? lastSubmittedParams?.accountId ?? '—',
-    [submittedAccountName, lastSubmittedParams]
-  )
+  const accountBreadcrumbLabel = useMemo(() => {
+    if (activeAccountIds.size === 0) {
+      return '未选择账号'
+    }
+    if (activeAccountIds.size === 1) {
+      const accountId = Array.from(activeAccountIds)[0]
+      return adAccountNameMap.get(accountId) ?? accountId
+    }
+    return `已选 ${activeAccountIds.size} 个账号`
+  }, [activeAccountIds, adAccountNameMap])
 
   const hasActiveSelection = useMemo(() => {
     const levelKeys: HierarchyLevel[] = ['campaign', 'adset', 'ad']
@@ -1094,7 +1261,12 @@ const InsightsDataPage = () => {
   }, [selectedEntityIds])
 
   const handleClearSelectionFilters = useCallback(() => {
-    setSelectedEntityIds(createEmptySelectionMap())
+    setSelectedEntityIds(prev => ({
+      account: new Set(prev.account),
+      campaign: new Set<string>(),
+      adset: new Set<string>(),
+      ad: new Set<string>()
+    }))
     setDrillSelection(prev => ({
       account: prev.account,
       campaign: null,
@@ -1102,19 +1274,7 @@ const InsightsDataPage = () => {
       ad: null
     }))
     setOpenDropdownLevel(null)
-    if (!lastSubmittedParams) {
-      return
-    }
-    const nextQuery = buildQueryForLevel(resultLevel, lastSubmittedParams, null)
-    if (!nextQuery) {
-      return
-    }
-    const shouldRefetchSameQuery = activeQuery ? areQueriesEqual(activeQuery, nextQuery) : false
-    setActiveQuery(nextQuery)
-    if (shouldRefetchSameQuery) {
-      void refetchInsights()
-    }
-  }, [buildQueryForLevel, lastSubmittedParams, resultLevel, activeQuery, refetchInsights])
+  }, [])
 
   const handleDropdownItemToggle = useCallback(
     (level: Exclude<HierarchyLevel, 'account'>, optionId: string, checked: boolean) => {
@@ -1169,13 +1329,11 @@ const InsightsDataPage = () => {
       setFormError('起始日期不能晚于结束日期')
       return
     }
-    const normalizedAccount = normalizeAccountId(accountInput)
-    if (!normalizedAccount) {
-      setFormError('请输入广告账号 ID，例如 act_123456789')
+    if (selectedAccountIds.size === 0) {
+      setFormError('请至少选择一个广告账号')
       return
     }
     const submittedParams: SubmittedParams = {
-      accountId: normalizedAccount,
       since: sinceDate,
       until: untilDate,
       source: selectedDataSource,
@@ -1183,12 +1341,18 @@ const InsightsDataPage = () => {
       breakdowns: breakdowns.trim() || undefined
     }
     setFormError(null)
-    setSubmittedAccountName(selectedAccountName ?? null)
     setSyncingEntityIds(new Set())
     setLastSubmittedParams(submittedParams)
-    setSelectedEntityIds(createEmptySelectionMap())
+    setActiveAccountIds(new Set(selectedAccountIds))
+    setCurrentPage(1)
+    setSelectedEntityIds(prev => ({
+      account: new Set(selectedAccountIds),
+      campaign: new Set(prev.campaign),
+      adset: new Set(prev.adset),
+      ad: new Set(prev.ad)
+    }))
     setDrillSelection({
-      account: normalizedAccount,
+      account: null,
       campaign: null,
       adset: null,
       ad: null
@@ -1196,33 +1360,25 @@ const InsightsDataPage = () => {
     setDetailEntityId(null)
     setDetailEntityName(null)
     setIsModalOpen(false)
-
-    const nextQuery = buildQueryForLevel(activeLevel, submittedParams)
-    if (!nextQuery) {
-      return
-    }
-    const shouldRefetchSameQuery = activeQuery ? areQueriesEqual(activeQuery, nextQuery) : false
-    setActiveQuery(nextQuery)
-
-    if (shouldRefetchSameQuery) {
-      void refetchInsights()
-    }
   }
 
   const handleLevelChange = (nextLevel: HierarchyLevel) => {
     setActiveLevel(nextLevel)
-    if (!lastSubmittedParams) {
-      return
-    }
-    const nextQuery = buildQueryForLevel(nextLevel)
-    if (!nextQuery) {
-      return
-    }
-    const shouldRefetchSameQuery = activeQuery ? areQueriesEqual(activeQuery, nextQuery) : false
-    setActiveQuery(nextQuery)
-    if (shouldRefetchSameQuery) {
-      void refetchInsights()
-    }
+    setCurrentPage(1)
+    setDrillSelection(prev => {
+      const updated: Record<HierarchyLevel, string | null> = { ...prev }
+      if (nextLevel === 'account') {
+        updated.campaign = null
+        updated.adset = null
+        updated.ad = null
+      } else if (nextLevel === 'campaign') {
+        updated.adset = null
+        updated.ad = null
+      } else if (nextLevel === 'adset') {
+        updated.ad = null
+      }
+      return updated
+    })
   }
 
   const handleRowFocus = (entityId: string) => {
@@ -1264,6 +1420,41 @@ const InsightsDataPage = () => {
   }
 
   const toggleRowSelection = (entityId: string, checked: boolean) => {
+    if (resultLevel === 'account') {
+      setSelectedAccountIds(prev => {
+        const next = new Set(prev)
+        let changed = false
+        if (checked) {
+          if (!next.has(entityId)) {
+            if (next.size >= MAX_SELECTED_ACCOUNTS) {
+              message.warning(`最多只能选择 ${MAX_SELECTED_ACCOUNTS} 个广告账号`)
+              return prev
+            }
+            next.add(entityId)
+            changed = true
+          }
+        } else if (next.has(entityId)) {
+          if (next.size <= 1) {
+            message.warning('至少保留一个广告账号以便继续查询')
+            return prev
+          }
+          next.delete(entityId)
+          changed = true
+        }
+        if (!changed) {
+          return prev
+        }
+        setSelectedEntityIds(prevIds => ({
+          account: new Set(next),
+          campaign: new Set(prevIds.campaign),
+          adset: new Set(prevIds.adset),
+          ad: new Set(prevIds.ad)
+        }))
+        return next
+      })
+      return
+    }
+
     setSelectedEntityIds(prev => {
       const updated: Record<HierarchyLevel, Set<string>> = {
         account: new Set(prev.account),
@@ -1320,14 +1511,28 @@ const InsightsDataPage = () => {
     }))
   }, [])
 
-  const isLoading = queryResult.isFetching && !queryResult.data
-  const isRefetching = queryResult.isFetching && Boolean(queryResult.data)
-  const errorMessage =
-    queryResult.isError && queryResult.error instanceof Error
-      ? queryResult.error.message
-      : queryResult.isError
-        ? '洞察数据获取失败，请稍后再试'
-        : null
+  const isLoading =
+    (Boolean(lastSubmittedParams) &&
+      accountQueryEntries.some(entry => entry.query.isLoading && !entry.query.data)) ||
+    isLoadingAccounts
+
+  const isRefetching = accountQueryEntries.some(
+    entry => entry.query.isFetching && Boolean(entry.query.data)
+  )
+
+  const errorMessage = useMemo(() => {
+    if (isAdAccountError) {
+      return '广告账号列表加载失败，请稍后重试。'
+    }
+    const errored = accountQueryEntries.find(entry => entry.query.isError)
+    if (!errored) {
+      return null
+    }
+    if (errored.query.error instanceof Error) {
+      return errored.query.error.message
+    }
+    return '洞察数据获取失败，请稍后再试'
+  }, [accountQueryEntries, isAdAccountError])
 
   return (
     <div className="page">
@@ -1354,25 +1559,12 @@ const InsightsDataPage = () => {
           className="card__body"
           style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}
         >
-          <label className="form-label" style={{ flex: '1 1 260px' }}>
+          <div className="form-label" style={{ flex: '1 1 260px' }}>
             <span>广告账号</span>
-            <AdAccountSelect
-              value={accountInput}
-              onChange={value => {
-                setAccountInput(value)
-                if (!value) {
-                  setSelectedAccountName(null)
-                }
-              }}
-              placeholder="act_123456789"
-              inputClassName="input"
-              required
-              helperText="可输入或从下拉列表选择 act_ 开头的账号 ID。"
-              onAccountDetailsChange={details => {
-                setSelectedAccountName(details?.name ?? null)
-              }}
-            />
-          </label>
+            <div className="form-hint">
+              账号默认在下方列表中勾选，最多 9 个，至少选择 1 个账号才能查看下级数据。
+            </div>
+          </div>
           <label className="form-label" style={{ flex: '1 1 160px' }}>
             <span>起始日期</span>
             <input
@@ -1446,11 +1638,11 @@ const InsightsDataPage = () => {
           <div>
             <div className="card__title">洞察结果</div>
             <div className="card__subtitle">
-              {activeQuery
-                ? `账号 ${activeQuery.accountId} · ${activeQuery.since} → ${activeQuery.until} · 数据源：${
-                    DATA_SOURCE_LABEL[activeQuery.source]
+              {lastSubmittedParams
+                ? `日期 ${lastSubmittedParams.since} → ${lastSubmittedParams.until} · 数据源：${
+                    DATA_SOURCE_LABEL[lastSubmittedParams.source]
                   }`
-                : '提交查询后将展示结果。'}
+                : '正在加载默认数据…'}
             </div>
           </div>
           {isRefetching && <div style={{ color: 'var(--color-text-muted)' }}>刷新中…</div>}
@@ -1460,7 +1652,7 @@ const InsightsDataPage = () => {
           <div className="card__body" style={{ color: 'var(--color-danger)' }}>{errorMessage}</div>
         ) : isLoading ? (
           <div className="card__body">数据加载中…</div>
-        ) : !queryResult.data ? (
+        ) : !lastSubmittedParams ? (
           <div className="card__body">尚未查询洞察数据。</div>
         ) : insights.length === 0 ? (
           <div className="card__body">未检索到符合条件的洞察记录。</div>
@@ -1896,7 +2088,7 @@ const InsightsDataPage = () => {
         open={isColumnPickerOpen}
         onCancel={() => setIsColumnPickerOpen(false)}
         footer={null}
-        destroyOnClose
+        destroyOnHidden
       >
         <div
           className={`${columnModalPrefix}__list`}
