@@ -10,6 +10,8 @@ import {
 } from '../../api/insights'
 import { fetchAdAccounts } from '../../api/adAccounts'
 import type { InsightRecord, InsightsDataResponse } from '../../types/insights'
+import type { RuleEntityType } from '../../types/rule-engine'
+import RuleBindingModal, { type RuleBindingTarget } from './RuleBindingModal'
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0
@@ -336,6 +338,8 @@ const InsightsDataPage = () => {
   const [columnOrder, setColumnOrder] = useState<MetricKey[]>(() => [...DEFAULT_COLUMN_ORDER])
   const [columnWidths, setColumnWidths] = useState<Record<MetricKey, number>>({ ...DEFAULT_COLUMN_WIDTHS })
   const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false)
+  const [isRuleBindingModalOpen, setIsRuleBindingModalOpen] = useState(false)
+  const [ruleBindingTarget, setRuleBindingTarget] = useState<RuleBindingTarget | null>(null)
   const [isTableMenuOpen, setIsTableMenuOpen] = useState(false)
   const [selectedEntityIds, setSelectedEntityIds] = useState<Record<HierarchyLevel, Set<string>>>(() => createEmptySelectionMap())
   const [drillSelection, setDrillSelection] = useState<Record<HierarchyLevel, string | null>>({
@@ -1502,9 +1506,19 @@ const InsightsDataPage = () => {
     setIsModalOpen(true)
   }
 
-  const handleManageRules = useCallback((entityId: string) => {
-    message.info(`即将为 ${entityId} 配置托管规则`, 2)
-  }, [])
+  const handleManageRules = useCallback(
+    (entity: AggregatedEntityRow) => {
+      const nextTarget: RuleBindingTarget = {
+        entityId: entity.entityId,
+        entityName: entity.entityName,
+        entityType: resultLevel as RuleEntityType,
+        accountId: entity.accountId
+      }
+      setRuleBindingTarget(nextTarget)
+      setIsRuleBindingModalOpen(true)
+    },
+    [resultLevel]
+  )
 
   const handleModalClose = () => {
     setIsModalOpen(false)
@@ -2145,7 +2159,7 @@ const InsightsDataPage = () => {
                               style={{ padding: '0.25rem 0.65rem', fontSize: '0.85rem' }}
                               onClick={event => {
                                 event.stopPropagation()
-                                handleManageRules(entity.entityId)
+                                handleManageRules(entity)
                               }}
                             >
                               托管
@@ -2438,6 +2452,17 @@ const InsightsDataPage = () => {
           </div>
         )}
       </Modal>
+
+      {ruleBindingTarget && (
+        <RuleBindingModal
+          target={ruleBindingTarget}
+          open={isRuleBindingModalOpen}
+          onClose={() => {
+            setIsRuleBindingModalOpen(false)
+            setRuleBindingTarget(null)
+          }}
+        />
+      )}
     </div>
   )
 }
