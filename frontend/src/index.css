@@ -126,7 +126,7 @@
 
   .app-shell__content {
     flex: 1;
-    padding: 1.5rem 2rem 2.5rem;
+    padding: 1rem;
     overflow-y: auto;
   }
 
