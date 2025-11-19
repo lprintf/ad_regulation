@@ -7,8 +7,8 @@ import {
 } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Dropdown, Select, Space, Table, Tag } from 'antd'
-import type { ColumnsType, TablePaginationConfig } from 'antd/es/table'
-import type { FilterValue, SorterResult, SortOrder } from 'antd/es/table/interface'
+import type { ColumnsType, TablePaginationConfig, TableProps } from 'antd/es/table'
+import type { SortOrder } from 'antd/es/table/interface'
 import { FilterOutlined, ReloadOutlined } from '@ant-design/icons'
 
 import {
@@ -159,7 +159,6 @@ const ExecutionLogsTable = ({
   onRetry: (log: RuleExecutionLog) => void
   onRowSelect: (log: RuleExecutionLog) => void
 }) => {
-  const { filters } = useFiltersContext()
   const [pagination, setPagination] = useState<TablePaginationConfig>({
     current: 1,
     pageSize: 10
@@ -333,10 +332,10 @@ const ExecutionLogsTable = ({
     [rulesOptions, sorterState, triggerOptions, statusOptions, retryLoading, onRetry]
   )
 
-  const handleTableChange = (
-    nextPagination: TablePaginationConfig,
-    _filters: Record<string, FilterValue | null>,
-    sorter: SorterResult<RuleExecutionLog> | SorterResult<RuleExecutionLog>[]
+  const handleTableChange: TableProps<RuleExecutionLog & { key: string }>['onChange'] = (
+    nextPagination,
+    _filters,
+    sorter
   ) => {
     setPagination({
       current: nextPagination.current ?? 1,
@@ -344,8 +343,9 @@ const ExecutionLogsTable = ({
     })
 
     const sorterResult = Array.isArray(sorter) ? sorter[0] : sorter
+    const columnKey = sorterResult?.columnKey ?? sorterResult?.field
     setSorterState({
-      columnKey: sorterResult?.columnKey ?? sorterResult?.field,
+      columnKey: Array.isArray(columnKey) ? columnKey[0] : columnKey,
       order: sorterResult?.order ?? undefined
     })
   }

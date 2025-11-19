@@ -1,14 +1,48 @@
-
 services:
-  mongodb:
+  fb-mongodb:
+    container_name: fb-mongodb
     image: mongo:latest
-    env_file:
-      - .env
+    restart: unless-stopped
+    env_file: .env
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
     volumes:
       - mongo:/data/db
+    networks:
+      - lprintf
+
+  fb-backend:
+    container_name: fb-backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MONGODB_HOST: fb-mongodb
+    depends_on:
+      - fb-mongodb
+    networks:
+      - lprintf
+
+  frontend:
+    container_name: fb-frontend
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fb.rule=Host(`fb.${DOMAIN:-127.0.0.1.sslip.io}`)"
+      - "traefik.http.routers.fb.entrypoints=websecure"
+      - "traefik.http.routers.fb.tls=true"
+      - "traefik.http.routers.fb.middlewares=strip-user-headers@file,oidc-auth@file"
+      - "traefik.http.services.fb-svc.loadbalancer.server.port=80"
+    depends_on:
+      - fb-backend
     networks:
       - lprintf
 

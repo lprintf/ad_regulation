@@ -15,10 +15,14 @@ import type {
 } from '../../types/facebook-auth'
 import { formatDateTime, formatRelativeTime } from '../../lib/datetime'
 
-const tokenTypeLabel: Record<FbTokenType, string> = {
+const tokenTypeLabel = {
   USER: '用户令牌',
-  SYSTEM_USER: '系统用户令牌',
-  null: '未知类型'
+  SYSTEM_USER: '系统用户令牌'
+} as const
+
+const getTokenTypeLabel = (type: FbTokenType): string => {
+  if (type === null) return '未知类型'
+  return tokenTypeLabel[type] ?? '未知类型'
 }
 
 type TokenStatus = {
@@ -471,7 +475,7 @@ const FacebookAuthPage = () => {
                           Access Token: ...{record.accessTokenLast4 ?? '****'}
                         </div>
                       </td>
-                      <td>{tokenTypeLabel[record.type]}</td>
+                      <td>{getTokenTypeLabel(record.type)}</td>
                       <td>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                           <span className={status.className}>{status.label}</span>
@@ -489,7 +493,7 @@ const FacebookAuthPage = () => {
                       </td>
                       <td>
                         <div>
-                          Token: {formatDateTime(record.expiresAt)}{' '}
+                          Token: {record.expiresAt ? formatDateTime(record.expiresAt) : '无过期时间'}{' '}
                           {record.expiresAt ? (
                             <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
                               （{formatRelativeTime(record.expiresAt)}）
@@ -500,7 +504,7 @@ const FacebookAuthPage = () => {
                             </span>
                           )}
                         </div>
-                        <div>Data Access: {formatDateTime(record.dataAccessExpiresAt)}</div>
+                        <div>Data Access: {record.dataAccessExpiresAt ? formatDateTime(record.dataAccessExpiresAt) : '无过期时间'}</div>
                       </td>
                       <td>
                         {record.scopes.length ? (

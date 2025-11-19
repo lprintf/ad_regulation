@@ -17,7 +17,8 @@
       "Bash(netstat:*)",
       "Bash(findstr:*)",
       "Bash(for:*)",
-      "Bash(do echo \"Checking shell $bash_id...\")"
+      "Bash(do echo \"Checking shell $bash_id...\")",
+      "Bash(docker compose:*)"
     ],
     "deny": [],
     "ask": []

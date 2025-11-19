@@ -4,7 +4,6 @@ import {
   fetchRuleBindings
 } from '../../api/ruleEngine'
 import type {
-  RuleBinding,
   RuleDefinition,
   RuleEntityType
 } from '../../types/rule-engine'

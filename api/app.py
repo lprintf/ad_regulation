@@ -5,7 +5,7 @@ Automated Facebook advertising regulation system.
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, APIRouter
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -116,15 +116,21 @@ async def generic_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Include routers
-app.include_router(health.router)
-app.include_router(ad_accounts.router)
-app.include_router(insights.router)
-app.include_router(predictions.router)
-app.include_router(ad_control.router)
-app.include_router(rules.router)
-app.include_router(scheduler.router)
-app.include_router(fb_auth.router)
+# Create API router for /api prefix
+api_router = APIRouter()
+
+# Include all routers under /api
+api_router.include_router(health.router)
+api_router.include_router(ad_accounts.router)
+api_router.include_router(insights.router)
+api_router.include_router(predictions.router)
+api_router.include_router(ad_control.router)
+api_router.include_router(rules.router)
+api_router.include_router(scheduler.router)
+api_router.include_router(fb_auth.router)
+
+# Include the API router with /api prefix
+app.include_router(api_router, prefix="/api")
 
 
 @app.get("/")

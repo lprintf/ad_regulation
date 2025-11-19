@@ -25,7 +25,7 @@ const serializeParams = (params?: Record<string, unknown>) => {
   return searchParams.toString()
 }
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? '/api'
 
 const apiClient = axios.create({
   baseURL: apiBaseUrl,

@@ -663,11 +663,6 @@ const InsightsDataPage = () => {
     return Array.from(source)
   }, [activeAccountIds, activeLevel, adAccounts, selectedAccountIds])
 
-  const accountSelectionKey = useMemo(
-    () => accountsToQuery.join(','),
-    [accountsToQuery]
-  )
-
   const accountQueries = useQueries({
     queries: accountsToQuery.map(accountId => ({
       queryKey: [
@@ -707,14 +702,6 @@ const InsightsDataPage = () => {
       })),
     [accountQueries, accountsToQuery]
   )
-
-  const refetchInsights = useCallback(() => {
-    accountQueryEntries.forEach(entry => {
-      if (entry.query?.refetch) {
-        void entry.query.refetch()
-      }
-    })
-  }, [accountQueryEntries])
 
   const insights: InsightRecord[] = useMemo(() => {
     if (!accountQueryEntries.length) {
@@ -2009,7 +1996,6 @@ const InsightsDataPage = () => {
                   {paginatedAggregatedInsights.map(entity => {
                     const isActiveRow = drillSelection[resultLevel] === entity.entityId
                     const checkboxChecked = currentLevelSelection.has(entity.entityId)
-                    const currentIndex = HIERARCHY_LEVELS.indexOf(resultLevel)
                     const statusColor = getStatusColor(entity.configuredStatus)
                     const isSyncingName = syncingEntityIds.has(entity.entityId)
                     const displayNameText = entity.entityName ?? (isSyncingName ? '同步中' : '名称未同步')
