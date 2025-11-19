@@ -10,10 +10,10 @@ services:
     command: uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload --loop uvloop
     volumes:
       # 挂载代码目录实现热重载
-      - ./api:/app/api:ro
-      - ./utils:/app/utils:ro
-      - ./baseline:/app/baseline:ro
-      - ./config.py:/app/config.py:ro
+      - ./backend/api:/app/api:ro
+      - ./backend/utils:/app/utils:ro
+      - ./backend/baseline:/app/baseline:ro
+      - ./backend/config.py:/app/config.py:ro
     labels:
       # 开发模式：添加直连后端路由（不经过认证中间件）
       - "traefik.enable=true"

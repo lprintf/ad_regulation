@@ -33,7 +33,7 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
     'X-Requested-With': 'frontend-rule-engine'
   },
-  timeout: 15000,
+  timeout: 60000, // 60 seconds for API calls that may fetch from Facebook
   paramsSerializer: {
     serialize: serializeParams
   }
