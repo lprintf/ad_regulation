@@ -17,8 +17,8 @@ uv run python scripts/db_migration/mongo_copy_collections.py \
 ```
 
 ### 离线迁移流程
-1. 在旧服务器运行 `uv run python scripts/db_migration/mongo_export_dump.py`，会把数据导出到 `output/mongo_dump`。
+1. 在旧服务器运行 `PYTHONPATH=. uv run --env-file=../.env  python scripts/db_migration/mongo_export_dump.py`，会把数据导出到 `output/mongo_dump`。
 2. 将该目录整体拷贝到新服务器相同路径。
-3. 在新服务器的项目目录中运行 `uv run python scripts/db_migration/mongo_import_dump.py`，即可恢复所有集合（导入时会自动 drop 目标集合）。
+3. 在新服务器的项目目录中运行 `PYTHONPATH=. uv run --env-file=../.env python scripts/db_migration/mongo_import_dump.py`，即可恢复所有集合（导入时会自动 drop 目标集合）。
 
 如需调整参与迁移的集合或日志策略，可修改 `mongo_collections.py` 中的集合列表。
