@@ -27,6 +27,8 @@ services:
         HTTP_PROXY: ${HTTP_PROXY:-}
         HTTPS_PROXY: ${HTTPS_PROXY:-}
         NO_PROXY: ${NO_PROXY:-}
+      extra_hosts:
+        - "host.docker.internal:host-gateway"
     environment:
       MONGODB_HOST: mongodb
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-fb}
@@ -52,6 +54,9 @@ services:
         VITE_API_BASE_URL: /api
     environment:
       BACKEND_HOST: backend
+    volumes:
+      # nginx 配置挂载到 default.conf.template（覆盖 nginx 默认配置）
+      - ../frontend/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
     depends_on:
       backend:
         condition: service_started
