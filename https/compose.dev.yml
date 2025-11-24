@@ -1,0 +1,39 @@
+# 开发模式配置
+# 使用方法: docker compose -f docker-compose.yml -f compose.dev.yml up
+
+services:
+  # 开发环境：独立的 MongoDB 实例，暴露端口方便调试
+  mongodb:
+    ports:
+      - "27017:27017"
+
+  # 开发环境的后端服务 - 覆盖模式，支持热重载
+  backend:
+    command: uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload --loop uvloop
+    volumes:
+      # 挂载代码目录实现热重载
+      - ../backend/api:/app/api:ro
+      - ../backend/utils:/app/utils:ro
+      - ../backend/baseline:/app/baseline:ro
+      - ../backend/config.py:/app/config.py:ro
+    labels:
+      # 开发模式：添加直连后端路由（不经过认证中间件）
+      - traefik.enable=true
+      - traefik.http.routers.fb-backend-dev.rule=Host(`fb-dev.${DOMAIN}`)
+      - traefik.http.routers.fb-backend-dev.entrypoints=websecure
+      - traefik.http.routers.fb-backend-dev.tls=true
+      - traefik.http.routers.fb-backend-dev.middlewares=strip-user-headers@file
+      - traefik.http.routers.fb-backend-dev.service=fb-backend-dev-svc
+      - traefik.http.services.fb-backend-dev-svc.loadbalancer.server.port=8000
+    networks:
+      default:
+      gateway-https:
+        aliases:
+          - ${COMPOSE_PROJECT_NAME}-backend-dev
+
+  # 开发环境的前端服务 - 覆盖模式
+  frontend:
+    volumes:
+      # 挂载本地构建的 dist 目录和开发配置
+      - ../frontend/dist:/usr/share/nginx/html:ro
+      - ../frontend/nginx.dev.conf.template:/etc/nginx/templates/default.conf.template:ro

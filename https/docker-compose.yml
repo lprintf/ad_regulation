@@ -1,0 +1,68 @@
+services:
+  mongodb:
+    image: mongo:latest
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - default  # 内部网络
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    environment:
+      MONGODB_HOST: mongodb
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-fb}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+    env_file:
+      - .env
+    depends_on:
+      - mongodb
+    networks:
+      - default  # 内部网络
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    environment:
+      BACKEND_HOST: backend
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      default:
+        # 内部网络使用简单服务名
+      gateway-https:
+        aliases:
+          - ${COMPOSE_PROJECT_NAME}-frontend  # 外部网络使用唯一别名
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.fb.rule=Host(`fb.${DOMAIN}`)
+      - traefik.http.routers.fb.entrypoints=websecure
+      - traefik.http.routers.fb.tls=true
+      - traefik.http.routers.fb.middlewares=strip-user-headers@file,oidc-auth@file
+      - traefik.http.services.fb.loadbalancer.server.port=80
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-ad-regulation-https}_internal
+  gateway-https:
+    external: true

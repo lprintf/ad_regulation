@@ -18,7 +18,10 @@
       "Bash(findstr:*)",
       "Bash(for:*)",
       "Bash(do echo \"Checking shell $bash_id...\")",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []

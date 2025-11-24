@@ -8,20 +8,20 @@ server {
 
     # API 代理到后端
     location /api/ {
-        proxy_pass http://fb-backend:8000;
+        proxy_pass http://backend-dev:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # 传递网关注入的用户认证信息
-        proxy_set_header X-User-Id $http_x_user_id;
-        proxy_set_header X-User-Email $http_x_user_email;
-        proxy_set_header X-User-Name $http_x_user_name;
+        # 开发模式：注入默认测试用户信息
+        proxy_set_header X-User-Id "testuser";
+        proxy_set_header X-User-Email "testuser@example.com";
+        proxy_set_header X-User-Name "Test User";
     }
 
     # 开发模式：代理 FastAPI 文档接口
     location ~ ^/(docs|redoc|openapi.json)$ {
-        proxy_pass http://fb-backend:8000;
+        proxy_pass http://backend-dev:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
