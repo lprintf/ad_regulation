@@ -28,7 +28,12 @@ from api.services.insights_sync_scheduler import (
     start_insights_sync_scheduler,
     stop_insights_sync_scheduler,
 )
+from api.services.realtime_cache_scheduler import (
+    start_realtime_cache_scheduler,
+    stop_realtime_cache_scheduler,
+)
 from utils.db import init_db
+from utils.redis_client import init_redis, close_redis
 
 
 @asynccontextmanager
@@ -40,12 +45,16 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database connection
     await init_db()
     print("✓ Database initialized")
+    await init_redis()
+    print("✓ Redis initialized")
     await RuleEngineService.ensure_demo_rule_seed()
     print("✓ Demo rule seeded (if missing)")
     await start_rule_scheduler()
     print("✓ Rule scheduler started")
     await start_insights_sync_scheduler()
     print("✓ Insights sync scheduler started")
+    await start_realtime_cache_scheduler()
+    print("✓ Realtime cache scheduler started")
 
     yield
 
@@ -54,6 +63,10 @@ async def lifespan(app: FastAPI):
     print("✓ Rule scheduler stopped")
     await stop_insights_sync_scheduler()
     print("✓ Insights sync scheduler stopped")
+    await stop_realtime_cache_scheduler()
+    print("✓ Realtime cache scheduler stopped")
+    await close_redis()
+    print("✓ Redis connection closed")
     await close_db_connection()
     print("✓ Database connection closed")
 

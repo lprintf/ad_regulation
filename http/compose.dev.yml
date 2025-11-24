@@ -7,6 +7,11 @@ services:
     ports:
       - "27017:27017"
 
+  # 开发环境：独立的 Redis 实例，暴露端口方便调试
+  redis:
+    ports:
+      - "6379:6379"
+
   # 开发环境的后端服务 - 独立容器，支持热重载
   backend-dev:
     build:
@@ -20,6 +25,8 @@ services:
     environment:
       MONGODB_HOST: mongodb
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-fb}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-}
@@ -35,6 +42,7 @@ services:
       - ../backend/config.py:/app/config.py:ro
     depends_on:
       - mongodb
+      - redis
     networks:
       - default  # 内部网络
     restart: unless-stopped

@@ -10,6 +10,15 @@ services:
       - default  # 内部网络
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data-http:/data
+    networks:
+      - default  # 内部网络
+    restart: unless-stopped
+
   backend:
     build:
       context: ../backend
@@ -21,6 +30,8 @@ services:
     environment:
       MONGODB_HOST: mongodb
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-fb}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-}
@@ -28,6 +39,7 @@ services:
       - .env
     depends_on:
       - mongodb
+      - redis
     networks:
       - default  # 内部网络
     restart: unless-stopped
@@ -59,6 +71,7 @@ services:
 
 volumes:
   mongo-data-http:
+  redis-data-http:
 
 networks:
   default:
