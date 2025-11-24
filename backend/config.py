@@ -18,3 +18,9 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 REDIS_DB = int(os.getenv("REDIS_DB", 0))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+
+# Realtime Cache Sync Configuration
+REALTIME_CACHE_SYNC_INTERVAL_MINUTES = int(os.getenv("REALTIME_CACHE_SYNC_INTERVAL_MINUTES", 30))
+# Supported values: 10, 20, 30 (must divide 60 evenly)
+if REALTIME_CACHE_SYNC_INTERVAL_MINUTES not in [10, 20, 30]:
+    raise ValueError(f"REALTIME_CACHE_SYNC_INTERVAL_MINUTES must be 10, 20, or 30, got {REALTIME_CACHE_SYNC_INTERVAL_MINUTES}")
