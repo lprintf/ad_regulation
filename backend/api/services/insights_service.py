@@ -182,41 +182,23 @@ async def _get_insights_from_redis_range(
         date_str = current_date.isoformat()
         try:
             daily_insights = await get_insights_from_cache(account_id, date_str)
-            # Normalize Redis data format to match DB format (same as _document_to_insight)
+            # Normalize Redis data format to match DB format
+            # Redis data now comes pre-formatted from cache_insights_for_date with:
+            # - 'date' field (and also 'date_start' for compatibility)
+            # - metrics wrapped in 'metrics' dict
             for insight in daily_insights:
-                # Convert date_start to date field if present
-                if "date_start" in insight and "date" not in insight:
+                # Ensure date field exists (should already be there from cache_insights_for_date)
+                if "date" not in insight and "date_start" in insight:
                     date_value = insight["date_start"]
                     if isinstance(date_value, str):
                         insight["date"] = date_value
                     elif isinstance(date_value, date):
                         insight["date"] = date_value.strftime("%Y-%m-%d")
                     else:
-                        insight["date"] = date_str  # Fallback to query date
+                        insight["date"] = date_str
                 # Ensure ad_account_id is present
                 if "ad_account_id" not in insight and "account_id" in insight:
                     insight["ad_account_id"] = InsightsService._normalize_account_id(insight["account_id"])
-                # Wrap raw metrics into metrics dict if needed (to match _document_to_insight format)
-                if "metrics" not in insight:
-                    metric_fields = [
-                        "spend", "impressions", "reach", "clicks",
-                        "inline_link_clicks", "outbound_clicks",
-                        "landing_page_view", "onsite_web_checkout",
-                        "onsite_web_add_to_cart", "onsite_web_purchase",
-                        "onsite_web_checkout_value", "onsite_web_add_to_cart_value",
-                        "onsite_web_purchase_value",
-                    ]
-                    metrics = {}
-                    for field in metric_fields:
-                        if field in insight:
-                            value = insight.pop(field)
-                            # Convert to proper types like _document_to_insight does
-                            if field in ("spend", "onsite_web_checkout_value",
-                                        "onsite_web_add_to_cart_value", "onsite_web_purchase_value"):
-                                metrics[field] = float(value) if value else 0.0
-                            else:
-                                metrics[field] = int(value) if value else 0
-                    insight["metrics"] = metrics
             insights_list.extend(daily_insights)
             logger.debug(f"Retrieved {len(daily_insights)} insights from Redis for {account_id} on {date_str}")
         except Exception as exc:
@@ -1399,6 +1381,27 @@ class InsightsService:
                     if not entity_value:
                         continue
                     campaign_value = result.get("campaign_id")
+
+                    # Convert date_start to date string first
+                    date_value = result.get("date_start")
+                    if isinstance(date_value, datetime):
+                        date_str = date_value.date().isoformat()
+                    elif isinstance(date_value, date):
+                        date_str = date_value.isoformat()
+                    else:
+                        date_str = str(date_value) if date_value else None
+
+                    # Build metrics dict
+                    metrics = {}
+                    for metric in [
+                        "spend", "impressions", "reach", "clicks",
+                        "inline_link_clicks", "outbound_clicks", "landing_page_view",
+                        "onsite_web_checkout", "onsite_web_add_to_cart", "onsite_web_purchase",
+                        "onsite_web_checkout_value", "onsite_web_add_to_cart_value", "onsite_web_purchase_value",
+                    ]:
+                        metrics[metric] = result.get(metric, 0)
+
+                    # Build record in standard format (same as _document_to_insight)
                     record: dict[str, Any] = {
                         "ad_account_id": account_id,
                         "ad_id": str(entity_value),
@@ -1411,25 +1414,11 @@ class InsightsService:
                         "ad_name": None,
                         "adset_name": None,
                         "campaign_name": None,
+                        "configured_status": None,
+                        "effective_status": None,
+                        "date": date_str,
+                        "metrics": metrics,
                     }
-
-                    # Copy metrics from aggregation result
-                    for metric in [
-                        "spend", "impressions", "reach", "clicks",
-                        "inline_link_clicks", "outbound_clicks", "landing_page_view",
-                        "onsite_web_checkout", "onsite_web_add_to_cart", "onsite_web_purchase",
-                        "onsite_web_checkout_value", "onsite_web_add_to_cart_value", "onsite_web_purchase_value",
-                    ]:
-                        record[metric] = result.get(metric, 0)
-
-                    # Convert date to string
-                    date_value = result.get("date_start")
-                    if isinstance(date_value, datetime):
-                        record["date_start"] = date_value.date().isoformat()
-                    elif isinstance(date_value, date):
-                        record["date_start"] = date_value.isoformat()
-                    else:
-                        record["date_start"] = str(date_value) if date_value else None
 
                     insights_list.append(record)
 
@@ -1488,11 +1477,20 @@ class InsightsService:
                     # Group and aggregate
                     grouped = df.groupby(agg_cols, as_index=False)[numeric_cols].sum()
 
-                    # Convert aggregated results to insights list
+                    # Convert aggregated results to insights list (standard format)
                     for _, row in grouped.iterrows():
                         entity_value = row.get(group_field)
                         campaign_value = row.get("campaign_id") if level == "adset" else None
 
+                        # Convert date_start to date string
+                        date_str = row["date_start"].isoformat() if isinstance(row["date_start"], date) else str(row["date_start"])
+
+                        # Build metrics dict
+                        metrics = {}
+                        for metric in numeric_cols:
+                            metrics[metric] = float(row[metric]) if metric in row else 0.0
+
+                        # Build record in standard format (same as MongoDB aggregation)
                         record: dict[str, Any] = {
                             "ad_account_id": account_id,
                             "ad_id": str(entity_value),
@@ -1505,12 +1503,11 @@ class InsightsService:
                             "ad_name": None,
                             "adset_name": None,
                             "campaign_name": None,
-                            "date_start": row["date_start"].isoformat() if isinstance(row["date_start"], date) else str(row["date_start"]),
+                            "configured_status": None,
+                            "effective_status": None,
+                            "date": date_str,
+                            "metrics": metrics,
                         }
-
-                        # Copy metrics
-                        for metric in numeric_cols:
-                            record[metric] = float(row[metric]) if metric in row else 0.0
 
                         insights_list.append(record)
 

@@ -158,8 +158,35 @@ async def cache_insights_for_date(
             if not ad_id:
                 continue
 
-            # Serialize insight data to JSON
-            field_value = json.dumps(insight, cls=DateTimeEncoder, ensure_ascii=False)
+            # Transform to match _document_to_insight format:
+            # - Add 'date' field from 'date_start'
+            # - Wrap metrics into 'metrics' dict
+            # - Keep IDs and account info at top level
+            transformed = {}
+            metrics = {}
+
+            for key, value in insight.items():
+                if key in ("account_id", "campaign_id", "adset_id", "ad_id", "date_start"):
+                    transformed[key] = value
+                else:
+                    # All other fields are metrics
+                    metrics[key] = value
+
+            # Add 'date' field (convert date_start to string if needed)
+            if "date_start" in transformed:
+                date_value = transformed["date_start"]
+                if isinstance(date_value, str):
+                    transformed["date"] = date_value
+                elif hasattr(date_value, 'strftime'):  # date or datetime
+                    transformed["date"] = date_value.strftime("%Y-%m-%d")
+                else:
+                    transformed["date"] = str(date_value)
+
+            # Add metrics dict
+            transformed["metrics"] = metrics
+
+            # Serialize transformed data to JSON
+            field_value = json.dumps(transformed, cls=DateTimeEncoder, ensure_ascii=False)
             await pipe.hset(cache_key, str(ad_id), field_value)
 
         # Set expiration
