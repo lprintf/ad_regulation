@@ -182,7 +182,7 @@ async def _get_insights_from_redis_range(
         date_str = current_date.isoformat()
         try:
             daily_insights = await get_insights_from_cache(account_id, date_str)
-            # Normalize Redis data format to match DB format
+            # Normalize Redis data format to match DB format (same as _document_to_insight)
             for insight in daily_insights:
                 # Convert date_start to date field if present
                 if "date_start" in insight and "date" not in insight:
@@ -196,9 +196,8 @@ async def _get_insights_from_redis_range(
                 # Ensure ad_account_id is present
                 if "ad_account_id" not in insight and "account_id" in insight:
                     insight["ad_account_id"] = InsightsService._normalize_account_id(insight["account_id"])
-                # Wrap raw metrics into metrics dict if needed
+                # Wrap raw metrics into metrics dict if needed (to match _document_to_insight format)
                 if "metrics" not in insight:
-                    # Move metric fields into metrics dict
                     metric_fields = [
                         "spend", "impressions", "reach", "clicks",
                         "inline_link_clicks", "outbound_clicks",
@@ -210,9 +209,14 @@ async def _get_insights_from_redis_range(
                     metrics = {}
                     for field in metric_fields:
                         if field in insight:
-                            metrics[field] = insight.pop(field)
-                    if metrics:
-                        insight["metrics"] = metrics
+                            value = insight.pop(field)
+                            # Convert to proper types like _document_to_insight does
+                            if field in ("spend", "onsite_web_checkout_value",
+                                        "onsite_web_add_to_cart_value", "onsite_web_purchase_value"):
+                                metrics[field] = float(value) if value else 0.0
+                            else:
+                                metrics[field] = int(value) if value else 0
+                    insight["metrics"] = metrics
             insights_list.extend(daily_insights)
             logger.debug(f"Retrieved {len(daily_insights)} insights from Redis for {account_id} on {date_str}")
         except Exception as exc:
@@ -1444,8 +1448,21 @@ class InsightsService:
                             redis_ad_data, object_level, object_ids
                         )
 
+                    # Flatten metrics dict for DataFrame creation
+                    # Redis data now has metrics wrapped in "metrics" dict (from _get_insights_from_redis_range)
+                    # but DataFrame creation needs them at top level
+                    flattened_data = []
+                    for record in redis_ad_data:
+                        flat_record = {k: v for k, v in record.items() if k != "metrics"}
+                        if "metrics" in record:
+                            flat_record.update(record["metrics"])
+                        # Also need date_start for groupby
+                        if "date" in flat_record and "date_start" not in flat_record:
+                            flat_record["date_start"] = flat_record["date"]
+                        flattened_data.append(flat_record)
+
                     # Convert to pandas DataFrame for aggregation
-                    df = pd.DataFrame(redis_ad_data)
+                    df = pd.DataFrame(flattened_data)
 
                     # Ensure date_start is in correct format
                     if "date_start" in df.columns:
