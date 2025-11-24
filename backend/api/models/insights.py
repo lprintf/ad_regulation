@@ -233,6 +233,9 @@ class InsightsResponse(BaseModel):
     date_range: dict[str, str] = Field(
         ..., description="Date range of the data (since, until)"
     )
+    last_synced_date: str | None = Field(
+        default=None, description="Last synced date for this account (YYYY-MM-DD)"
+    )
 
 
 class AsyncJobCreateResponse(BaseModel):

@@ -102,15 +102,16 @@ async def query_insights_from_database(
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsResponse]:
     """
-    Query Facebook Ads Insights data from MongoDB database only.
-    This endpoint does NOT call Facebook API - it only returns data that has been previously synced.
+    Query Facebook Ads Insights data from MongoDB + Redis hybrid cache.
+    Automatically splits date range: MongoDB for historical data (> 3 days ago), Redis for recent data (last 3 days).
+    This endpoint does NOT call Facebook API - it returns cached data only.
 
     Supports aggregation by level:
     - level="ad": Returns ad-level data (no aggregation)
     - level="adset": Aggregates ad data by adset_id and date
     - level="campaign": Aggregates ad data by campaign_id and date
 
-    Use this for viewing historical data. Use /insights/query or /insights/jobs for fetching new data from Facebook.
+    Use this for viewing recent + historical data with fast performance. Use /insights/query or /insights/jobs for fetching new data from Facebook.
 
     Args:
         ad_account_id: Ad account ID (with or without act_ prefix)
@@ -122,7 +123,7 @@ async def query_insights_from_database(
         user_id: Current user ID from X-User-Id header
 
     Returns:
-        SuccessResponse containing insights data from database
+        SuccessResponse containing insights data from hybrid cache (MongoDB + Redis)
 
     Example:
         ```
@@ -137,7 +138,7 @@ async def query_insights_from_database(
         ```
     """
     try:
-        result = await InsightsService.query_insights_from_db(
+        result = await InsightsService.query_insights_mongo_redis(
             ad_account_id=ad_account_id,
             since=since,
             until=until,
@@ -166,6 +167,7 @@ async def query_insights_from_database(
             ],
             total_records=result["total_records"],
             date_range=result["date_range"],
+            last_synced_date=result.get("last_synced_date"),
         )
 
         return SuccessResponse(
@@ -185,7 +187,250 @@ async def query_insights_from_database(
         )
 
 
-# ===== Query Endpoints =====
+# ===== Database Query Endpoints =====
+
+
+@router.get("/query/mongo", response_model=SuccessResponse[InsightsResponse])
+async def query_insights_mongo_only(
+    ad_account_id: Annotated[
+        str,
+        Query(
+            description="Ad account ID (with or without act_ prefix)",
+            examples=["act_123456789"],
+        ),
+    ],
+    since: Annotated[
+        str,
+        Query(
+            description="Start date in YYYY-MM-DD format",
+            examples=["2024-01-01"],
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+        ),
+    ],
+    until: Annotated[
+        str,
+        Query(
+            description="End date in YYYY-MM-DD format",
+            examples=["2024-01-31"],
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+        ),
+    ],
+    level: Annotated[
+        str,
+        Query(
+            description="Aggregation level: ad, adset, or campaign",
+            examples=["ad", "adset", "campaign"],
+        ),
+    ] = "ad",
+    time_increment: Annotated[
+        int | None,
+        Query(
+            description="Time increment: 1=daily, null=aggregate (currently only daily supported)",
+            examples=[1],
+        ),
+    ] = 1,
+    breakdowns: Annotated[
+        str | None,
+        Query(
+            description="Breakdowns (currently not supported, must be empty)",
+            examples=[""],
+        ),
+    ] = None,
+    object_ids: Annotated[
+        list[str] | None,
+        Query(
+            description="Optional entity IDs to filter within the selected account",
+            examples=[["123", "456"]],
+        ),
+    ] = None,
+    object_level: Annotated[
+        str | None,
+        Query(
+            alias="obj_level",
+            description="Level for the provided object_ids (ad, adset, campaign)",
+            examples=["campaign"],
+        ),
+    ] = None,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[InsightsResponse]:
+    """
+    Query Facebook Ads Insights data from MongoDB only (pure historical data).
+    No Redis cache, no Facebook API calls.
+
+    Returns:
+        SuccessResponse containing insights data from MongoDB
+    """
+    try:
+        result = await InsightsService.query_insights_mongo_only(
+            ad_account_id=ad_account_id,
+            since=since,
+            until=until,
+            level=level,
+            time_increment=time_increment,
+            breakdowns=breakdowns,
+            object_level=object_level,
+            object_ids=object_ids,
+            mask_ad_ids=True,
+        )
+
+        insights_data = InsightsResponse(
+            insights=[
+                InsightRecord(
+                    ad_account_id=insight.get("ad_account_id") or ad_account_id,
+                    ad_id=insight.get("ad_id") if level == "ad" else None,
+                    adset_id=insight.get("adset_id"),
+                    campaign_id=insight.get("campaign_id"),
+                    ad_name=insight.get("ad_name"),
+                    adset_name=insight.get("adset_name"),
+                    campaign_name=insight.get("campaign_name"),
+                    date=insight["date"],
+                    metrics=insight["metrics"],
+                )
+                for insight in result["insights"]
+            ],
+            total_records=result["total_records"],
+            date_range=result["date_range"],
+            last_synced_date=result.get("last_synced_date"),
+        )
+
+        return SuccessResponse(
+            data=insights_data,
+            message=f"Successfully queried {result['total_records']} insight records from MongoDB",
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query insights from MongoDB: {str(e)}",
+        )
+
+
+@router.get("/query/mongo_redis", response_model=SuccessResponse[InsightsResponse])
+async def query_insights_mongo_redis_hybrid(
+    ad_account_id: Annotated[
+        str,
+        Query(
+            description="Ad account ID (with or without act_ prefix)",
+            examples=["act_123456789"],
+        ),
+    ],
+    since: Annotated[
+        str,
+        Query(
+            description="Start date in YYYY-MM-DD format",
+            examples=["2024-01-01"],
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+        ),
+    ],
+    until: Annotated[
+        str,
+        Query(
+            description="End date in YYYY-MM-DD format",
+            examples=["2024-01-31"],
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+        ),
+    ],
+    level: Annotated[
+        str,
+        Query(
+            description="Aggregation level: ad, adset, or campaign",
+            examples=["ad", "adset", "campaign"],
+        ),
+    ] = "ad",
+    time_increment: Annotated[
+        int | None,
+        Query(
+            description="Time increment: 1=daily, null=aggregate (currently only daily supported)",
+            examples=[1],
+        ),
+    ] = 1,
+    breakdowns: Annotated[
+        str | None,
+        Query(
+            description="Breakdowns (currently not supported, must be empty)",
+            examples=[""],
+        ),
+    ] = None,
+    object_ids: Annotated[
+        list[str] | None,
+        Query(
+            description="Optional entity IDs to filter within the selected account",
+            examples=[["123", "456"]],
+        ),
+    ] = None,
+    object_level: Annotated[
+        str | None,
+        Query(
+            alias="obj_level",
+            description="Level for the provided object_ids (ad, adset, campaign)",
+            examples=["campaign"],
+        ),
+    ] = None,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[InsightsResponse]:
+    """
+    Query Facebook Ads Insights data from MongoDB + Redis hybrid cache.
+    Automatically splits date range: MongoDB for historical (> 3 days ago), Redis for recent (last 3 days).
+
+    Returns:
+        SuccessResponse containing insights data from hybrid cache
+    """
+    try:
+        result = await InsightsService.query_insights_mongo_redis(
+            ad_account_id=ad_account_id,
+            since=since,
+            until=until,
+            level=level,
+            time_increment=time_increment,
+            breakdowns=breakdowns,
+            object_level=object_level,
+            object_ids=object_ids,
+            mask_ad_ids=True,
+        )
+
+        insights_data = InsightsResponse(
+            insights=[
+                InsightRecord(
+                    ad_account_id=insight.get("ad_account_id") or ad_account_id,
+                    ad_id=insight.get("ad_id") if level == "ad" else None,
+                    adset_id=insight.get("adset_id"),
+                    campaign_id=insight.get("campaign_id"),
+                    ad_name=insight.get("ad_name"),
+                    adset_name=insight.get("adset_name"),
+                    campaign_name=insight.get("campaign_name"),
+                    date=insight["date"],
+                    metrics=insight["metrics"],
+                )
+                for insight in result["insights"]
+            ],
+            total_records=result["total_records"],
+            date_range=result["date_range"],
+            last_synced_date=result.get("last_synced_date"),
+        )
+
+        return SuccessResponse(
+            data=insights_data,
+            message=f"Successfully queried {result['total_records']} insight records from hybrid cache",
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to query insights from hybrid cache: {str(e)}",
+        )
+
+
+# ===== Realtime Query Endpoints =====
 
 
 @router.post("/query", response_model=SuccessResponse[InsightsResponse])
@@ -268,14 +513,15 @@ async def query_insights_realtime(
         )
 
 
-@router.post("/query/hybrid", response_model=SuccessResponse[InsightsResponse])
-async def query_insights_hybrid(
+@router.post("/query/mongo_from-last", response_model=SuccessResponse[InsightsResponse])
+async def query_insights_mongo_from_last_hybrid(
     request: InsightsHybridRequest,
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsResponse]:
     """
-    Merge database data with realtime gap fill in a single round-trip.
-    Preferred replacement for calling /insights + /insights/query/from-last separately.
+    Query MongoDB + Facebook API from-last gap fill in a single round-trip.
+    Fetches cached data from MongoDB, then fills missing recent data using Facebook API from_last.
+    Preferred replacement for calling /query/mongo + /query/from-last separately.
     """
     try:
         result = await InsightsService.query_insights_hybrid(

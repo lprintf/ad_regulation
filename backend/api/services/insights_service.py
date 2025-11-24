@@ -318,7 +318,7 @@ class InsightsService:
             historical_until = min(until_date, realtime_cutoff)
 
             if since_date <= historical_until:
-                historical_payload = await InsightsService.query_insights_from_db(
+                historical_payload = await InsightsService.query_insights_mongo_only(
                     ad_account_id=account_id,
                     since=since_date.strftime("%Y-%m-%d"),
                     until=historical_until.strftime("%Y-%m-%d"),
@@ -539,7 +539,7 @@ class InsightsService:
 
         account_id = InsightsService._normalize_account_id(ad_account_id)
 
-        db_task = InsightsService.query_insights_from_db(
+        db_task = InsightsService.query_insights_mongo_only(
             ad_account_id=account_id,
             since=since,
             until=until,
@@ -1159,7 +1159,7 @@ class InsightsService:
         return insights_list
 
     @staticmethod
-    async def query_insights_from_db(
+    async def query_insights_mongo_only(
         ad_account_id: str,
         since: str,
         until: str,
@@ -1171,18 +1171,18 @@ class InsightsService:
         mask_ad_ids: bool = False,
     ) -> dict[str, Any]:
         """
-        Query insights data from MongoDB database only (no Facebook API calls).
-        This is used for viewing historical data that has already been synced.
+        Query insights data from MongoDB database only (no Redis, no Facebook API calls).
+        This is used for viewing pure historical data that has been synced to MongoDB.
 
         Args:
             ad_account_id: Ad account ID (with or without act_ prefix)
             since: Start date in YYYY-MM-DD format
             until: End date in YYYY-MM-DD format
             level: Aggregation level (account, campaign, adset, or ad)
-        time_increment: Time increment (1=daily, None=aggregate) - currently only daily is supported
-        breakdowns: Comma-separated breakdown dimensions - currently not supported
-        object_level: Optional parent level for filtering (ad, adset, campaign)
-        object_ids: Optional list of entity IDs to limit the query scope
+            time_increment: Time increment (1=daily, None=aggregate) - currently only daily is supported
+            breakdowns: Comma-separated breakdown dimensions - currently not supported
+            object_level: Optional parent level for filtering (ad, adset, campaign)
+            object_ids: Optional list of entity IDs to limit the query scope
 
         Returns:
             Dictionary containing insights data with metrics and metadata
@@ -1194,6 +1194,275 @@ class InsightsService:
         # Database stores account_id without act_ prefix (e.g., "1244295750378353")
         account_id = InsightsService._normalize_account_id(ad_account_id)
         # Remove act_ prefix for database query
+        account_id_without_prefix = account_id.replace("act_", "") if account_id.startswith("act_") else account_id
+
+        # Validate dates
+        since_date = InsightsService._parse_date(since, "since date")
+        until_date = InsightsService._parse_date(until, "until date")
+        if since_date > until_date:
+            raise ValueError("since date must be on or before until date")
+
+        # Validate parameters
+        valid_levels = ["account", "campaign", "adset", "ad"]
+        if level not in valid_levels:
+            raise ValueError(
+                f"Invalid level '{level}'. Must be one of: {', '.join(valid_levels)}"
+            )
+        if time_increment not in (1, None):
+            raise ValueError(
+                f"Database query currently only supports time_increment=1 (daily) or None, got {time_increment}"
+            )
+        if breakdowns and breakdowns.strip():
+            raise ValueError(
+                f"Database query currently does not support breakdowns, got '{breakdowns}'"
+            )
+
+        object_filter = _resolve_object_filter(object_level, object_ids)
+
+        # MongoDB only - no Redis
+        logger.debug(
+            f"MongoDB-only query for {account_id}: since={since_date}, until={until_date}"
+        )
+
+        # Initialize insights list
+        insights_list: list[dict[str, Any]] = []
+
+        # Query database based on level
+        if level == "ad":
+            # Ad-level: direct query, no aggregation needed
+
+            # Query MongoDB
+            if since_date and until_date:
+                date_lower = datetime.combine(since_date, datetime.min.time())
+                date_upper = datetime.combine(until_date, datetime.min.time())
+                filters = [
+                    InsightsDailyDocument.account_id == account_id_without_prefix,
+                    InsightsDailyDocument.date_start >= date_lower,
+                    InsightsDailyDocument.date_start <= date_upper,
+                ]
+                if object_filter:
+                    field_name, normalized_ids = object_filter
+                    field = getattr(InsightsDailyDocument, field_name)
+                    filters.append(In(field, normalized_ids))
+
+                docs = await InsightsDailyDocument.find(*filters).to_list()
+                mongo_insights = [InsightsService._document_to_insight(doc) for doc in docs]
+                insights_list.extend(mongo_insights)
+                logger.debug(f"Retrieved {len(mongo_insights)} insights from MongoDB")
+
+        else:
+            # Campaign or AdSet level: use aggregation
+            from utils.db import get_document_collection
+            import pandas as pd
+
+            collection = get_document_collection(InsightsDailyDocument)
+
+            # Determine group field based on level
+            if level == "campaign":
+                group_field = "campaign_id"
+            elif level == "adset":
+                group_field = "adset_id"
+            else:
+                group_field = "account_id"
+
+            # Query MongoDB with aggregation
+            if since_date and until_date:
+                date_lower = datetime.combine(since_date, datetime.min.time())
+                date_upper = datetime.combine(until_date, datetime.min.time())
+                match_stage: dict[str, Any] = {
+                    "account_id": account_id_without_prefix,
+                    "date_start": {
+                        "$gte": date_lower,
+                        "$lte": date_upper,
+                    },
+                }
+                if object_filter:
+                    field_name, normalized_ids = object_filter
+                    match_stage[field_name] = {"$in": normalized_ids}
+
+                group_stage: dict[str, Any] = {
+                    "_id": {
+                        group_field: f"${group_field}",
+                        "date_start": "$date_start",
+                    },
+                    "spend": _sum_numeric_expression("spend"),
+                    "impressions": _sum_numeric_expression("impressions"),
+                    "reach": _sum_numeric_expression("reach"),
+                    "clicks": _sum_numeric_expression("clicks"),
+                    "inline_link_clicks": _sum_numeric_expression("inline_link_clicks"),
+                    "outbound_clicks": _sum_numeric_expression("outbound_clicks"),
+                    "landing_page_view": _sum_numeric_expression("landing_page_view"),
+                    "onsite_web_checkout": _sum_numeric_expression("onsite_web_checkout"),
+                    "onsite_web_add_to_cart": _sum_numeric_expression("onsite_web_add_to_cart"),
+                    "onsite_web_purchase": _sum_numeric_expression("onsite_web_purchase"),
+                    "onsite_web_checkout_value": _sum_numeric_expression("onsite_web_checkout_value"),
+                    "onsite_web_add_to_cart_value": _sum_numeric_expression("onsite_web_add_to_cart_value"),
+                    "onsite_web_purchase_value": _sum_numeric_expression("onsite_web_purchase_value"),
+                }
+                if level == "adset":
+                    group_stage["campaign_id"] = {"$first": "$campaign_id"}
+
+                project_stage: dict[str, Any] = {
+                    "_id": 0,
+                    "ad_id": f"$_id.{group_field}",
+                    "date_start": "$_id.date_start",
+                    "spend": 1,
+                    "impressions": 1,
+                    "reach": 1,
+                    "clicks": 1,
+                    "inline_link_clicks": 1,
+                    "outbound_clicks": 1,
+                    "landing_page_view": 1,
+                    "onsite_web_checkout": 1,
+                    "onsite_web_add_to_cart": 1,
+                    "onsite_web_purchase": 1,
+                    "onsite_web_checkout_value": 1,
+                    "onsite_web_add_to_cart_value": 1,
+                    "onsite_web_purchase_value": 1,
+                }
+                if level == "adset":
+                    project_stage["campaign_id"] = "$campaign_id"
+
+                # Build and execute aggregation pipeline for MongoDB
+                pipeline = [
+                    {"$match": match_stage},
+                    {"$group": group_stage},
+                    {"$project": project_stage},
+                    {"$sort": {"date_start": 1, "ad_id": 1}},
+                ]
+
+                mongo_results = await InsightsDailyDocument.aggregate(pipeline).to_list()
+                logger.debug(f"MongoDB aggregation returned {len(mongo_results)} results")
+
+                # Convert MongoDB aggregation results to insights list
+                for result in mongo_results:
+                    entity_value = result.get("ad_id")
+                    if not entity_value:
+                        continue
+                    campaign_value = result.get("campaign_id")
+
+                    # Convert date_start to date string first
+                    date_value = result.get("date_start")
+                    if isinstance(date_value, datetime):
+                        date_str = date_value.date().isoformat()
+                    elif isinstance(date_value, date):
+                        date_str = date_value.isoformat()
+                    else:
+                        date_str = str(date_value) if date_value else None
+
+                    # Build metrics dict
+                    metrics = {}
+                    for metric in [
+                        "spend", "impressions", "reach", "clicks",
+                        "inline_link_clicks", "outbound_clicks", "landing_page_view",
+                        "onsite_web_checkout", "onsite_web_add_to_cart", "onsite_web_purchase",
+                        "onsite_web_checkout_value", "onsite_web_add_to_cart_value", "onsite_web_purchase_value",
+                    ]:
+                        metrics[metric] = result.get(metric, 0)
+
+                    # Build record in standard format (same as _document_to_insight)
+                    record: dict[str, Any] = {
+                        "ad_account_id": account_id,
+                        "ad_id": str(entity_value),
+                        "adset_id": str(entity_value) if level == "adset" else None,
+                        "campaign_id": (
+                            str(entity_value)
+                            if level == "campaign"
+                            else (str(campaign_value) if campaign_value is not None else None)
+                        ),
+                        "ad_name": None,
+                        "adset_name": None,
+                        "campaign_name": None,
+                        "configured_status": None,
+                        "effective_status": None,
+                        "date": date_str,
+                        "metrics": metrics,
+                    }
+
+                    insights_list.append(record)
+
+        # Sort by date and ad_id
+        insights_list = sorted(
+            insights_list,
+            key=lambda item: (item["date"], item["ad_id"]),
+        )
+
+        insights_list = _filter_insights_by_objects(
+            insights_list,
+            object_level,
+            object_ids,
+        )
+
+        # Fetch entity names from database and attach to insights
+        insights_list = await InsightsService._attach_entity_names(
+            insights_list, level, account_id_without_prefix
+        )
+
+
+        if mask_ad_ids and level != "ad":
+            sanitized_list: list[dict[str, Any]] = []
+            for insight in insights_list:
+                sanitized = dict(insight)
+                sanitized["ad_id"] = None
+                sanitized_list.append(sanitized)
+            insights_list = sanitized_list
+
+        # Get last synced date for this account
+        last_synced_date_str: str | None = None
+        state = await InsightsSyncStateDocument.find_one(
+            InsightsSyncStateDocument.account_id == account_id_without_prefix
+        )
+        if state:
+            last_synced_source = (
+                state.last_synced_date
+                or state.range_until
+                or state.obs_until
+            )
+            last_synced_date_obj = InsightsService._normalize_state_date(last_synced_source)
+            if last_synced_date_obj:
+                last_synced_date_str = last_synced_date_obj.strftime("%Y-%m-%d")
+
+        return {
+            "insights": insights_list,
+            "total_records": len(insights_list),
+            "date_range": {"since": since, "until": until},
+            "last_synced_date": last_synced_date_str,
+        }
+
+    @staticmethod
+    async def query_insights_mongo_redis(
+        ad_account_id: str,
+        since: str,
+        until: str,
+        level: str = "ad",
+        time_increment: int | None = None,
+        breakdowns: str | None = None,
+        object_level: str | None = None,
+        object_ids: list[str] | None = None,
+        mask_ad_ids: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Query insights data from MongoDB (historical) + Redis (recent 3 days) hybrid cache.
+        Automatically splits date range between MongoDB and Redis based on REALTIME_LOOKBACK_DAYS boundary.
+
+        Args:
+            ad_account_id: Ad account ID (with or without act_ prefix)
+            since: Start date in YYYY-MM-DD format
+            until: End date in YYYY-MM-DD format
+            level: Aggregation level (account, campaign, adset, or ad)
+            time_increment: Time increment (1=daily, None=aggregate) - currently only daily is supported
+            breakdowns: Comma-separated breakdown dimensions - currently not supported
+            object_level: Optional parent level for filtering (ad, adset, campaign)
+            object_ids: Optional list of entity IDs to limit the query scope
+
+        Returns:
+            Dictionary containing insights data with metrics and metadata
+
+        Raises:
+            ValueError: If parameters are invalid or unsupported features are requested
+        """
+        # Normalize account ID and remove act_ prefix for database query
+        account_id = InsightsService._normalize_account_id(ad_account_id)
         account_id_without_prefix = account_id.replace("act_", "") if account_id.startswith("act_") else account_id
 
         # Validate dates
@@ -1240,12 +1509,12 @@ class InsightsService:
         else:
             # Split: historical from MongoDB, realtime from Redis
             mongo_since = since_date
-            mongo_until = realtime_boundary - timedelta(days=1)  # Day before realtime boundary
+            mongo_until = realtime_boundary - timedelta(days=1)
             redis_since = realtime_boundary
             redis_until = until_date
 
         logger.debug(
-            f"Query split for {account_id}: "
+            f"Hybrid query for {account_id}: "
             f"mongo=({mongo_since}, {mongo_until}), redis=({redis_since}, {redis_until})"
         )
 
@@ -1438,8 +1707,6 @@ class InsightsService:
                         )
 
                     # Flatten metrics dict for DataFrame creation
-                    # Redis data now has metrics wrapped in "metrics" dict (from _get_insights_from_redis_range)
-                    # but DataFrame creation needs them at top level
                     flattened_data = []
                     for record in redis_ad_data:
                         flat_record = {k: v for k, v in record.items() if k != "metrics"}
@@ -1531,19 +1798,34 @@ class InsightsService:
             insights_list, level, account_id_without_prefix
         )
 
-
-        if mask_ad_ids and level != "ad":
-            sanitized_list: list[dict[str, Any]] = []
+        if mask_ad_ids:
+            sanitized_list = []
             for insight in insights_list:
                 sanitized = dict(insight)
                 sanitized["ad_id"] = None
                 sanitized_list.append(sanitized)
             insights_list = sanitized_list
 
+        # Get last synced date for this account
+        last_synced_date_str: str | None = None
+        state = await InsightsSyncStateDocument.find_one(
+            InsightsSyncStateDocument.account_id == account_id_without_prefix
+        )
+        if state:
+            last_synced_source = (
+                state.last_synced_date
+                or state.range_until
+                or state.obs_until
+            )
+            last_synced_date_obj = InsightsService._normalize_state_date(last_synced_source)
+            if last_synced_date_obj:
+                last_synced_date_str = last_synced_date_obj.strftime("%Y-%m-%d")
+
         return {
             "insights": insights_list,
             "total_records": len(insights_list),
             "date_range": {"since": since, "until": until},
+            "last_synced_date": last_synced_date_str,
         }
 async def _resolve_latest_synced_date(account_id_without_prefix: str) -> date | None:
     docs = (

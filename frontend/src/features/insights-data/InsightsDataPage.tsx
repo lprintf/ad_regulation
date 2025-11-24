@@ -266,8 +266,8 @@ interface AggregatedEntityRow {
 }
 
 const DATA_SOURCE_LABEL: Record<InsightsDataQuery['source'], string> = {
+  database: '混合:db+redis',
   'frontend-hybrid': '混合（前端拼接）',
-  database: '数据库',
   realtime: '实时数据',
   hybrid: '混合（后端）'
 }
@@ -326,7 +326,7 @@ const InsightsDataPage = () => {
   const [untilDate, setUntilDate] = useState(defaultRange.until)
   const [timeIncrement] = useState(DEFAULT_TIME_INCREMENT)
   const [selectedDataSource, setSelectedDataSource] =
-    useState<InsightsDataQuery['source']>('frontend-hybrid')
+    useState<InsightsDataQuery['source']>('database')
   const [formError, setFormError] = useState<string | null>(null)
   const [activeLevel, setActiveLevel] = useState<HierarchyLevel>('account')
   const [lastSubmittedParams, setLastSubmittedParams] = useState<SubmittedParams | null>(null)
@@ -1671,8 +1671,8 @@ const InsightsDataPage = () => {
               value={selectedDataSource}
               onChange={event => setSelectedDataSource(event.target.value as InsightsDataQuery['source'])}
             >
-              <option value="frontend-hybrid">混合（前端：数据库 + from-last）</option>
               <option value="database">仅数据库</option>
+              <option value="frontend-hybrid">混合（前端：数据库 + from-last）</option>
               <option value="realtime">仅实时</option>
               <option value="hybrid">混合（后端接口）</option>
             </select>
