@@ -1,0 +1,71 @@
+# 开发模式配置
+# 使用方法: docker compose -f docker-compose.yml -f compose.dev.yml up
+
+services:
+  # 开发环境：独立的 MongoDB 实例，暴露端口方便调试
+  mongodb:
+    ports:
+      - "27017:27017"
+
+  # 开发环境的后端服务 - 独立容器，支持热重载
+  backend-dev:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    command: uvicorn api.app:app --host 0.0.0.0 --port 8000 --reload --loop uvloop
+    environment:
+      MONGODB_HOST: mongodb
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-fb}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-}
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # 挂载代码目录实现热重载
+      - ../backend/api:/app/api:ro
+      - ../backend/utils:/app/utils:ro
+      - ../backend/baseline:/app/baseline:ro
+      - ../backend/config.py:/app/config.py:ro
+    depends_on:
+      - mongodb
+    networks:
+      - default  # 内部网络
+    restart: unless-stopped
+
+  # 开发环境的前端服务 - 独立容器
+  frontend-dev:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+    environment:
+      # nginx 使用 Compose 服务名访问后端
+      BACKEND_HOST: backend-dev
+    volumes:
+      # 挂载本地构建的 dist 目录和开发配置
+      - ../frontend/dist:/usr/share/nginx/html:ro
+      - ../frontend/nginx.dev.conf.template:/etc/nginx/templates/default.conf.template:ro
+    depends_on:
+      - backend-dev
+    networks:
+      default:
+        # 内部网络使用简单服务名
+      gateway-http:
+        aliases:
+          - ${COMPOSE_PROJECT_NAME}-frontend-dev  # 外部网络使用唯一别名
+    labels:
+      - traefik.enable=true
+      # 开发路由：绕过身份认证（路由名使用项目变量避免冲突）
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-ad-regulation-http}-dev.rule=Host(`fb-dev.${DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-ad-regulation-http}-dev.entrypoints=web
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME:-ad-regulation-http}-dev.middlewares=strip-user-headers@file
+      - traefik.http.services.${COMPOSE_PROJECT_NAME:-ad-regulation-http}-dev.loadbalancer.server.port=80
+    restart: unless-stopped
