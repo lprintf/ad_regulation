@@ -5,7 +5,19 @@ Provides connection pooling and utility functions for Redis operations.
 
 import json
 import logging
+from datetime import date, datetime
 from typing import Any
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles date and datetime objects."""
+
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        return super().default(obj)
 
 import redis.asyncio as aioredis
 from redis.asyncio import Redis, ConnectionPool
@@ -147,7 +159,7 @@ async def cache_insights_for_date(
                 continue
 
             # Serialize insight data to JSON
-            field_value = json.dumps(insight, ensure_ascii=False)
+            field_value = json.dumps(insight, cls=DateTimeEncoder, ensure_ascii=False)
             await pipe.hset(cache_key, str(ad_id), field_value)
 
         # Set expiration

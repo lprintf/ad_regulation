@@ -40,5 +40,5 @@ COPY config.py ./
 
 EXPOSE 8000
 
-# Default command (production)
-CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000", "--loop", "uvloop"]
+# Default command (production) - 使用 Granian (Rust-based ASGI server，性能比 uvicorn 提升 30-50%)
+CMD ["granian", "api.app:app", "--interface", "asgi", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--http", "1", "--backlog", "2048", "--loop", "uvloop", "--respawn-failed-workers"]

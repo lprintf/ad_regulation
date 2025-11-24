@@ -31,9 +31,12 @@ RUN if [ -f pnpm-lock.yaml ]; then \
     fi
 
 # Production stage with nginx
-FROM nginx:1.25-alpine
+FROM nginx:1.27-alpine
 
-COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+# nginx 配置通过 docker-compose volume 挂载到 /etc/nginx/templates/default.conf.template
+# 生产环境: nginx.conf.template → default.conf.template
+# 开发环境: nginx.dev.conf.template → default.conf.template
+
 COPY --from=build /app/dist /usr/share/nginx/html
 
 EXPOSE 80

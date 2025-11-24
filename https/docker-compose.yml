@@ -40,6 +40,9 @@ services:
         VITE_API_BASE_URL: /api
     environment:
       BACKEND_HOST: backend
+    volumes:
+      # nginx 配置挂载到 default.conf.template（覆盖 nginx 默认配置）
+      - ../frontend/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
     depends_on:
       backend:
         condition: service_started
