@@ -173,7 +173,7 @@ async def _get_insights_from_redis_range(
         until_date: End date
 
     Returns:
-        List of insight records from Redis cache
+        List of insight records from Redis cache (normalized to match DB format)
     """
     insights_list = []
     current_date = since_date
@@ -182,6 +182,37 @@ async def _get_insights_from_redis_range(
         date_str = current_date.isoformat()
         try:
             daily_insights = await get_insights_from_cache(account_id, date_str)
+            # Normalize Redis data format to match DB format
+            for insight in daily_insights:
+                # Convert date_start to date field if present
+                if "date_start" in insight and "date" not in insight:
+                    date_value = insight["date_start"]
+                    if isinstance(date_value, str):
+                        insight["date"] = date_value
+                    elif isinstance(date_value, date):
+                        insight["date"] = date_value.strftime("%Y-%m-%d")
+                    else:
+                        insight["date"] = date_str  # Fallback to query date
+                # Ensure ad_account_id is present
+                if "ad_account_id" not in insight and "account_id" in insight:
+                    insight["ad_account_id"] = InsightsService._normalize_account_id(insight["account_id"])
+                # Wrap raw metrics into metrics dict if needed
+                if "metrics" not in insight:
+                    # Move metric fields into metrics dict
+                    metric_fields = [
+                        "spend", "impressions", "reach", "clicks",
+                        "inline_link_clicks", "outbound_clicks",
+                        "landing_page_view", "onsite_web_checkout",
+                        "onsite_web_add_to_cart", "onsite_web_purchase",
+                        "onsite_web_checkout_value", "onsite_web_add_to_cart_value",
+                        "onsite_web_purchase_value",
+                    ]
+                    metrics = {}
+                    for field in metric_fields:
+                        if field in insight:
+                            metrics[field] = insight.pop(field)
+                    if metrics:
+                        insight["metrics"] = metrics
             insights_list.extend(daily_insights)
             logger.debug(f"Retrieved {len(daily_insights)} insights from Redis for {account_id} on {date_str}")
         except Exception as exc:
@@ -821,6 +852,15 @@ class InsightsService:
             text = str(value).strip()
             return text or None
 
+        def _safe_get_metric(row, field: str, default: float | int, as_type: type):
+            """Safely get metric value from row with fallback to default."""
+            if field not in columns:
+                return as_type(default)
+            value = row.get(field, default)
+            if value is None or (isinstance(value, float) and math.isnan(value)):
+                return as_type(default)
+            return as_type(value)
+
         for _, row in df.iterrows():
             insight_record = {
                 "ad_account_id": InsightsService._normalize_account_id(
@@ -838,25 +878,19 @@ class InsightsService:
                 "effective_status": None,
                 "date": str(row["date_start"]),
                 "metrics": {
-                    "spend": float(row["spend"]),
-                    "impressions": int(row["impressions"]),
-                    "reach": int(row["reach"]),
-                    "clicks": int(row["clicks"]),
-                    "inline_link_clicks": int(row["inline_link_clicks"]),
-                    "outbound_clicks": int(row["outbound_clicks"]),
-                    "landing_page_view": int(row["landing_page_view"]),
-                    "onsite_web_checkout": int(row["onsite_web_checkout"]),
-                    "onsite_web_add_to_cart": int(row["onsite_web_add_to_cart"]),
-                    "onsite_web_purchase": int(row["onsite_web_purchase"]),
-                    "onsite_web_checkout_value": float(
-                        row["onsite_web_checkout_value"]
-                    ),
-                    "onsite_web_add_to_cart_value": float(
-                        row["onsite_web_add_to_cart_value"]
-                    ),
-                    "onsite_web_purchase_value": float(
-                        row["onsite_web_purchase_value"]
-                    ),
+                    "spend": _safe_get_metric(row, "spend", 0.0, float),
+                    "impressions": _safe_get_metric(row, "impressions", 0, int),
+                    "reach": _safe_get_metric(row, "reach", 0, int),
+                    "clicks": _safe_get_metric(row, "clicks", 0, int),
+                    "inline_link_clicks": _safe_get_metric(row, "inline_link_clicks", 0, int),
+                    "outbound_clicks": _safe_get_metric(row, "outbound_clicks", 0, int),
+                    "landing_page_view": _safe_get_metric(row, "landing_page_view", 0, int),
+                    "onsite_web_checkout": _safe_get_metric(row, "onsite_web_checkout", 0, int),
+                    "onsite_web_add_to_cart": _safe_get_metric(row, "onsite_web_add_to_cart", 0, int),
+                    "onsite_web_purchase": _safe_get_metric(row, "onsite_web_purchase", 0, int),
+                    "onsite_web_checkout_value": _safe_get_metric(row, "onsite_web_checkout_value", 0.0, float),
+                    "onsite_web_add_to_cart_value": _safe_get_metric(row, "onsite_web_add_to_cart_value", 0.0, float),
+                    "onsite_web_purchase_value": _safe_get_metric(row, "onsite_web_purchase_value", 0.0, float),
                 },
             }
 

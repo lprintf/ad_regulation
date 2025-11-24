@@ -96,12 +96,18 @@ atomic_dtype_spec = {
     "onsite_web_add_to_cart": "int32",  # 加购次数：整数
     "onsite_web_purchase_value": "float32",  # 购买金额：float32
     "onsite_web_add_to_cart_value": "float32",  # 加购金额：float32
+    "onsite_web_checkout": "int32",  # 结账次数：整数
+    "onsite_web_checkout_value": "float32",  # 结账金额：float32
 }
 
 
 def ensure_atomic_insight_df_type(df: DataFrame):
-    """确保数据帧的列类型为 atomic_dtype_spec 中定义的"""
-    return df.astype(atomic_dtype_spec) if not df.empty else df
+    """确保数据帧的列类型为 atomic_dtype_spec 中定义的（仅对存在的列进行转换）"""
+    if df.empty:
+        return df
+    # Only cast columns that exist in both df and dtype_spec
+    existing_columns = {col: dtype for col, dtype in atomic_dtype_spec.items() if col in df.columns}
+    return df.astype(existing_columns) if existing_columns else df
 
 
 def get_insight(
