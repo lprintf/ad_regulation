@@ -266,10 +266,10 @@ interface AggregatedEntityRow {
 }
 
 const DATA_SOURCE_LABEL: Record<InsightsDataQuery['source'], string> = {
-  database: '混合:db+redis',
-  'frontend-hybrid': '混合（前端拼接）',
-  realtime: '实时数据',
-  hybrid: '混合（后端）'
+  mongo: '纯 MongoDB（历史数据）',
+  mongo_redis: 'MongoDB + Redis（缓存混合）',
+  realtime: '实时 API（全部调 Facebook）',
+  mongo_from_last: 'MongoDB + 增量 API（历史+最新）'
 }
 
 const ENTITY_NAME_SYNC_BATCH_SIZE = 50
@@ -326,7 +326,7 @@ const InsightsDataPage = () => {
   const [untilDate, setUntilDate] = useState(defaultRange.until)
   const [timeIncrement] = useState(DEFAULT_TIME_INCREMENT)
   const [selectedDataSource, setSelectedDataSource] =
-    useState<InsightsDataQuery['source']>('database')
+    useState<InsightsDataQuery['source']>('mongo_redis')
   const [formError, setFormError] = useState<string | null>(null)
   const [activeLevel, setActiveLevel] = useState<HierarchyLevel>('account')
   const [lastSubmittedParams, setLastSubmittedParams] = useState<SubmittedParams | null>(null)
@@ -1671,10 +1671,10 @@ const InsightsDataPage = () => {
               value={selectedDataSource}
               onChange={event => setSelectedDataSource(event.target.value as InsightsDataQuery['source'])}
             >
-              <option value="database">仅数据库</option>
-              <option value="frontend-hybrid">混合（前端：数据库 + from-last）</option>
-              <option value="realtime">仅实时</option>
-              <option value="hybrid">混合（后端接口）</option>
+              <option value="mongo">纯 MongoDB（历史数据）</option>
+              <option value="mongo_redis">MongoDB + Redis（缓存混合）</option>
+              <option value="realtime">实时 API（全部调 Facebook）</option>
+              <option value="mongo_from_last">MongoDB + 增量 API（历史+最新）</option>
             </select>
           </div>
 

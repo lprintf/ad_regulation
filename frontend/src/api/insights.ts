@@ -110,7 +110,7 @@ const mapInsightRecordFromApi = (item: any): InsightRecord => {
   }
 }
 
-export type InsightsDataSource = 'database' | 'realtime' | 'frontend-hybrid' | 'hybrid'
+export type InsightsDataSource = 'mongo' | 'mongo_redis' | 'realtime' | 'mongo_from_last'
 
 export interface InsightsDataQuery {
   accountId: string
@@ -282,8 +282,14 @@ const buildFromLastParams = (params: InsightsDataQuery) => {
 }
 
 export const fetchInsightsData = async (params: InsightsDataQuery): Promise<InsightsDataResponse> => {
-  if (params.source === 'database') {
-    const { data } = await apiClient.get('/insights', { params: buildDbParams(params) })
+  if (params.source === 'mongo') {
+    const { data } = await apiClient.get('/insights/query/mongo', { params: buildDbParams(params) })
+    const response = mapApiResponse(data, params.since, params.until)
+    return applyObjectFilterToResponse(response, params)
+  }
+
+  if (params.source === 'mongo_redis') {
+    const { data } = await apiClient.get('/insights/query/mongo_redis', { params: buildDbParams(params) })
     const response = mapApiResponse(data, params.since, params.until)
     return applyObjectFilterToResponse(response, params)
   }
@@ -294,50 +300,8 @@ export const fetchInsightsData = async (params: InsightsDataQuery): Promise<Insi
     return applyObjectFilterToResponse(response, params)
   }
 
-  if (params.source === 'frontend-hybrid') {
-    const [dbResponse, realtimeResponse] = await Promise.all([
-      apiClient.get('/insights', { params: buildDbParams(params) }),
-      apiClient.get('/insights/query/from-last', { params: buildFromLastParams(params) })
-    ])
-
-    const dbResult = mapApiResponse(dbResponse.data, params.since, params.until)
-    const realtimeResult = mapApiResponse(realtimeResponse.data, params.since, params.until)
-
-    const recordMap = new Map<string, InsightRecord>()
-    const makeKey = (record: InsightRecord) => {
-      const entityKey = record.adId ?? record.adsetId ?? record.campaignId ?? record.adAccountId
-      return `${record.date}-${entityKey}`
-    }
-
-    for (const record of dbResult.insights) {
-      recordMap.set(makeKey(record), record)
-    }
-    for (const record of realtimeResult.insights) {
-      recordMap.set(makeKey(record), record)
-    }
-
-    const mergedInsights = Array.from(recordMap.values()).sort((a, b) => {
-      const dateCompare = a.date.localeCompare(b.date)
-      if (dateCompare !== 0) {
-        return dateCompare
-      }
-      const left = a.adId ?? a.adsetId ?? a.campaignId ?? a.adAccountId
-      const right = b.adId ?? b.adsetId ?? b.campaignId ?? b.adAccountId
-      return left.localeCompare(right)
-    })
-
-    const mergedResponse: InsightsDataResponse = {
-      insights: mergedInsights,
-      totalRecords: mergedInsights.length,
-      dateRange: {
-        since: params.since,
-        until: params.until
-      }
-    }
-    return applyObjectFilterToResponse(mergedResponse, params)
-  }
-
-  const { data } = await apiClient.post('/insights/query/hybrid', buildHybridPayload(params))
+  // mongo_from_last: MongoDB + Facebook API from-last gap fill (server-side merge)
+  const { data } = await apiClient.post('/insights/query/mongo_from-last', buildHybridPayload(params))
   const response = mapApiResponse(data, params.since, params.until)
   return applyObjectFilterToResponse(response, params)
 }
