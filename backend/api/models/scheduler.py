@@ -16,6 +16,7 @@ class SchedulerNamespace(str, Enum):
 
     RULES = "rules"
     INSIGHTS = "insights"
+    REALTIME_CACHE = "realtime_cache"
 
 
 class SchedulerTaskResponse(BaseModel):

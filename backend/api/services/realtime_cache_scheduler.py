@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 JOB_ID = "insights::realtime_cache_sync"
 SYNC_INTERVAL_MINUTES = REALTIME_CACHE_SYNC_INTERVAL_MINUTES
+_JOB_DISPLAY_NAME = "Realtime Cache Sync"
 
 
 async def _sync_realtime_insights():
@@ -179,25 +181,93 @@ async def stop_realtime_cache_scheduler() -> None:
     _scheduler = None
 
 
-async def trigger_realtime_cache_sync_now() -> dict[str, Any]:
-    """
-    Manually trigger an immediate realtime cache sync.
+def _serialize_job(job: Any | None) -> dict[str, Any]:
+    """Serialize job information for API responses."""
+    if job is None or _scheduler is None:
+        status = "stopped"
+        cron_repr = f"cron[minute='*/{SYNC_INTERVAL_MINUTES}', second='0']"
+        next_run_time = None
+    else:
+        status = "running" if job.next_run_time is not None else "paused"
+        cron_repr = str(job.trigger)
+        next_run_time = job.next_run_time
 
-    Returns:
-        Status dictionary
+    return {
+        "id": JOB_ID,
+        "name": _JOB_DISPLAY_NAME,
+        "cron": cron_repr,
+        "status": status,
+        "next_run_at": next_run_time,
+        "last_run_at": None,  # Not tracked yet
+        "average_latency_ms": None,  # Not tracked yet
+        "max_latency_ms": None,  # Not tracked yet
+        "last_error": None,  # Not tracked yet
+        "metadata": {"interval_minutes": SYNC_INTERVAL_MINUTES},
+    }
+
+
+def get_realtime_cache_scheduler_task() -> dict[str, Any]:
+    """Get the current status of the realtime cache sync task."""
+    job = _scheduler.get_job(JOB_ID) if _scheduler else None
+    return _serialize_job(job)
+
+
+def pause_realtime_cache_scheduler_task() -> None:
+    """Pause the realtime cache sync task."""
+    if _scheduler is None:
+        raise ValueError("Realtime cache scheduler is not running")
+    try:
+        _scheduler.pause_job(JOB_ID)
+        logger.info("Paused realtime cache scheduler task %s", JOB_ID)
+    except JobLookupError as exc:
+        raise ValueError("Realtime cache scheduler task not found") from exc
+
+
+def resume_realtime_cache_scheduler_task() -> None:
+    """Resume the realtime cache sync task."""
+    if _scheduler is None:
+        raise ValueError("Realtime cache scheduler is not running")
+    try:
+        _scheduler.resume_job(JOB_ID)
+        logger.info("Resumed realtime cache scheduler task %s", JOB_ID)
+    except JobLookupError as exc:
+        raise ValueError("Realtime cache scheduler task not found") from exc
+
+
+async def run_realtime_cache_scheduler_task_now() -> None:
+    """Manually trigger the realtime cache sync task immediately."""
+    if _scheduler is None:
+        raise ValueError("Realtime cache scheduler is not running")
+    job = _scheduler.get_job(JOB_ID)
+    if job is None:
+        raise ValueError("Realtime cache scheduler task not found")
+    await job.func(*job.args, **job.kwargs)
+
+
+def update_realtime_cache_scheduler_task(
+    *, cron_expression: str | None = None, metadata: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """
+    Update realtime cache scheduler configuration.
+
+    Note: Cron expression changes are not supported for realtime cache scheduler
+    as it uses a fixed interval from config. Metadata updates are allowed.
     """
     if _scheduler is None:
         raise ValueError("Realtime cache scheduler is not running")
 
     job = _scheduler.get_job(JOB_ID)
     if job is None:
-        raise ValueError("Realtime cache sync job not found")
+        raise ValueError("Realtime cache scheduler task not found")
 
-    # Execute immediately
-    await job.func()
+    if cron_expression is not None:
+        logger.warning(
+            "Cron expression update ignored for realtime cache scheduler. "
+            "Interval is controlled by REALTIME_CACHE_SYNC_INTERVAL_MINUTES config."
+        )
 
-    return {
-        "status": "completed",
-        "message": "Realtime cache sync executed successfully",
-        "timestamp": datetime.utcnow().isoformat(),
-    }
+    # Metadata updates are allowed but don't affect the job behavior
+    if metadata is not None:
+        logger.info("Metadata update for realtime cache scheduler: %s", metadata)
+
+    return _serialize_job(job)

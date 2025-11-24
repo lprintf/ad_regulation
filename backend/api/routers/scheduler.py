@@ -1,7 +1,7 @@
 """
 Scheduler management endpoints.
 
-Consolidates rule and insights scheduler controls under a single namespace-aware API.
+Consolidates rule, insights, and realtime cache scheduler controls under a single namespace-aware API.
 """
 
 from __future__ import annotations
@@ -21,6 +21,14 @@ from api.services.insights_sync_scheduler import (
     resume_insights_scheduler_task,
     run_insights_scheduler_task_now,
     update_insights_scheduler_task,
+)
+from api.services.realtime_cache_scheduler import (
+    JOB_ID as REALTIME_CACHE_JOB_ID,
+    get_realtime_cache_scheduler_task,
+    pause_realtime_cache_scheduler_task,
+    resume_realtime_cache_scheduler_task,
+    run_realtime_cache_scheduler_task_now,
+    update_realtime_cache_scheduler_task,
 )
 from api.services.rule_scheduler import (
     get_scheduler_tasks as get_rule_scheduler_tasks,
@@ -54,6 +62,11 @@ def _ensure_insights_task(task_id: str) -> None:
         raise ValueError(f"Insights scheduler task {task_id} not found")
 
 
+def _ensure_realtime_cache_task(task_id: str) -> None:
+    if task_id != REALTIME_CACHE_JOB_ID:
+        raise ValueError(f"Realtime cache scheduler task {task_id} not found")
+
+
 @router.get(
     "/tasks",
     response_model=SuccessResponse[list[SchedulerTaskResponse]],
@@ -68,6 +81,12 @@ async def list_scheduler_tasks():
         _with_namespace(
             SchedulerNamespace.INSIGHTS,
             get_insights_scheduler_task(),
+        )
+    )
+    tasks.append(
+        _with_namespace(
+            SchedulerNamespace.REALTIME_CACHE,
+            get_realtime_cache_scheduler_task(),
         )
     )
     return SuccessResponse(data=tasks, message="Scheduler tasks retrieved")
@@ -91,9 +110,15 @@ async def update_scheduler_task(
                 cron_expression=req.cron,
                 metadata=req.metadata,
             )
-        else:
+        elif namespace is SchedulerNamespace.INSIGHTS:
             _ensure_insights_task(task_id)
             task = update_insights_scheduler_task(
+                cron_expression=req.cron,
+                metadata=req.metadata,
+            )
+        else:  # REALTIME_CACHE
+            _ensure_realtime_cache_task(task_id)
+            task = update_realtime_cache_scheduler_task(
                 cron_expression=req.cron,
                 metadata=req.metadata,
             )
@@ -117,9 +142,12 @@ async def pause_scheduler_task(
     try:
         if namespace is SchedulerNamespace.RULES:
             pause_rule_scheduler_task(task_id)
-        else:
+        elif namespace is SchedulerNamespace.INSIGHTS:
             _ensure_insights_task(task_id)
             pause_insights_scheduler_task()
+        else:  # REALTIME_CACHE
+            _ensure_realtime_cache_task(task_id)
+            pause_realtime_cache_scheduler_task()
         return SuccessResponse(
             data={
                 "namespace": namespace.value,
@@ -144,9 +172,12 @@ async def resume_scheduler_task(
     try:
         if namespace is SchedulerNamespace.RULES:
             resume_rule_scheduler_task(task_id)
-        else:
+        elif namespace is SchedulerNamespace.INSIGHTS:
             _ensure_insights_task(task_id)
             resume_insights_scheduler_task()
+        else:  # REALTIME_CACHE
+            _ensure_realtime_cache_task(task_id)
+            resume_realtime_cache_scheduler_task()
         return SuccessResponse(
             data={
                 "namespace": namespace.value,
@@ -171,9 +202,12 @@ async def run_scheduler_task(
     try:
         if namespace is SchedulerNamespace.RULES:
             await run_rule_scheduler_task_now(task_id)
-        else:
+        elif namespace is SchedulerNamespace.INSIGHTS:
             _ensure_insights_task(task_id)
             await run_insights_scheduler_task_now()
+        else:  # REALTIME_CACHE
+            _ensure_realtime_cache_task(task_id)
+            await run_realtime_cache_scheduler_task_now()
         return SuccessResponse(
             data={
                 "namespace": namespace.value,
