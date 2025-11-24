@@ -26,4 +26,4 @@ output/
 test/
 tests/mocks/
 
-.vscode/
+.vscode/.claude
