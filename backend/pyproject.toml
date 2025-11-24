@@ -9,7 +9,7 @@ dependencies = [
     "beanie>=2.0.0",
     "facebook-business>=23.0.3",
     "fastapi>=0.115.0",
-    "granian>=1.6.0",
+    "granian[reload]>=1.6.0",
     "httpx>=0.27.0",
     "matplotlib>=3.10.7",
     "pandas>=2.3.3",
@@ -18,5 +18,5 @@ dependencies = [
     "pymongo>=4.15.3",
     "redis>=5.2.0",
     "scikit-learn>=1.7.2",
-    "uvicorn[standard]>=0.30.0",
+    "uvloop>=0.21.0",
 ]
