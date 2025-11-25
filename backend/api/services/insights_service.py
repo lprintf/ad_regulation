@@ -1769,7 +1769,7 @@ class InsightsService:
             insights_list, level, account_id_without_prefix
         )
 
-        if mask_ad_ids:
+        if mask_ad_ids and level != "ad":
             sanitized_list = []
             for insight in insights_list:
                 sanitized = dict(insight)
