@@ -57,7 +57,6 @@ const METRIC_COLUMN_MAP = METRIC_COLUMNS.reduce<Record<MetricKey, (typeof METRIC
 )
 
 const MAX_TOOLTIP_POINTS = 14
-const MAX_SELECTED_ACCOUNTS = 9
 const DEFAULT_TIME_INCREMENT = 1
 
 type MetricKey = (typeof METRIC_COLUMNS)[number]['key']
@@ -396,7 +395,7 @@ const InsightsDataPage = () => {
     if (!adAccounts.length || lastSubmittedParams) {
       return
     }
-    const initialIds = adAccounts.slice(0, MAX_SELECTED_ACCOUNTS).map(account => account.id)
+    const initialIds = adAccounts.map(account => account.id)
     const initialSet = new Set(initialIds)
     setActiveAccountIds(new Set(initialSet))
     setLastSubmittedParams({
@@ -659,7 +658,7 @@ const InsightsDataPage = () => {
         ? activeAccountIds
         : selectedAccountIds.size > 0
           ? selectedAccountIds
-          : new Set(adAccounts.slice(0, MAX_SELECTED_ACCOUNTS).map(account => account.id))
+          : new Set(adAccounts.map(account => account.id))
     return Array.from(source)
   }, [activeAccountIds, activeLevel, adAccounts, selectedAccountIds])
 
@@ -1012,10 +1011,6 @@ const InsightsDataPage = () => {
           for (const entity of paginatedAggregatedInsights) {
             if (next.has(entity.entityId)) {
               continue
-            }
-            if (next.size >= MAX_SELECTED_ACCOUNTS) {
-              message.warning(`最多只能选择 ${MAX_SELECTED_ACCOUNTS} 个广告账号`)
-              break
             }
             next.add(entity.entityId)
             changed = true
@@ -1406,10 +1401,6 @@ const InsightsDataPage = () => {
       setFormError('起始日期不能晚于结束日期')
       return
     }
-    if (selectedAccountIds.size === 0) {
-      setFormError('请至少选择一个广告账号')
-      return
-    }
     const submittedParams: SubmittedParams = {
       since: sinceDate,
       until: untilDate,
@@ -1520,10 +1511,6 @@ const InsightsDataPage = () => {
         let changed = false
         if (checked) {
           if (!next.has(entityId)) {
-            if (next.size >= MAX_SELECTED_ACCOUNTS) {
-              message.warning(`最多只能选择 ${MAX_SELECTED_ACCOUNTS} 个广告账号`)
-              return prev
-            }
             next.add(entityId)
             changed = true
           }
