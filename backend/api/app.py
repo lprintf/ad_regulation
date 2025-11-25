@@ -21,6 +21,7 @@ from api.routers import (
     predictions,
     rules,
     scheduler,
+    user,
 )
 from api.services.rule_engine_service import RuleEngineService
 from api.services.rule_scheduler import start_rule_scheduler, stop_rule_scheduler
@@ -134,6 +135,7 @@ api_router = APIRouter()
 
 # Include all routers under /api
 api_router.include_router(health.router)
+api_router.include_router(user.router)
 api_router.include_router(ad_accounts.router)
 api_router.include_router(insights.router)
 api_router.include_router(predictions.router)

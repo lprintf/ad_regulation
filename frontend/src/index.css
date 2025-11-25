@@ -244,6 +244,40 @@
     gap: 0.75rem;
   }
 
+  .user-info-compact {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius-sm);
+    background: rgba(37, 99, 235, 0.08);
+    border: 1px solid rgba(37, 99, 235, 0.2);
+    transition: all 0.2s ease;
+  }
+
+  .user-info-compact:hover {
+    background: rgba(37, 99, 235, 0.12);
+    border-color: rgba(37, 99, 235, 0.3);
+  }
+
+  .user-info-compact__avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-success) 100%);
+    color: white;
+    flex-shrink: 0;
+  }
+
+  .user-info-compact__name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
   .card {
     background: var(--color-surface);
     border-radius: var(--radius-lg);

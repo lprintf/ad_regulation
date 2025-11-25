@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import UserInfo from './UserInfo'
 
 const getEnvLabel = () => {
   const url = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -33,6 +34,7 @@ const Topbar = () => {
         <span className="chip chip--muted">
           {new Date().toLocaleDateString('zh-CN')}
         </span>
+        <UserInfo />
       </div>
     </header>
   )
