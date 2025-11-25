@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from facebook_business.adobjects.ad import Ad
 from facebook_business.exceptions import FacebookRequestError
 
+from utils.account_id import normalize_account_id
 from utils.fb_api_flyweight_factory import get_ad_object
 
 
@@ -26,9 +27,8 @@ class AdControlService:
             Dictionary containing ad status and details
         """
         try:
-            # Ensure account ID has act_ prefix
-            if not ad_account_id.startswith("act_"):
-                ad_account_id = f"act_{ad_account_id}"
+            # Normalize account ID
+            ad_account_id = normalize_account_id(ad_account_id)
 
             # Get ad object
             ad = await get_ad_object(ad_account_id, ad_id)
@@ -76,9 +76,8 @@ class AdControlService:
             Dictionary with operation result
         """
         try:
-            # Ensure account ID has act_ prefix
-            if not ad_account_id.startswith("act_"):
-                ad_account_id = f"act_{ad_account_id}"
+            # Normalize account ID
+            ad_account_id = normalize_account_id(ad_account_id)
 
             # Get ad object
             ad = await get_ad_object(ad_account_id, ad_id)
@@ -115,9 +114,8 @@ class AdControlService:
             Dictionary with operation result
         """
         try:
-            # Ensure account ID has act_ prefix
-            if not ad_account_id.startswith("act_"):
-                ad_account_id = f"act_{ad_account_id}"
+            # Normalize account ID
+            ad_account_id = normalize_account_id(ad_account_id)
 
             # Get ad object
             ad = await get_ad_object(ad_account_id, ad_id)
@@ -157,9 +155,8 @@ class AdControlService:
             Dictionary with operation result
         """
         try:
-            # Ensure account ID has act_ prefix
-            if not ad_account_id.startswith("act_"):
-                ad_account_id = f"act_{ad_account_id}"
+            # Normalize account ID
+            ad_account_id = normalize_account_id(ad_account_id)
 
             # Get ad object
             ad = await get_ad_object(ad_account_id, ad_id)
@@ -196,9 +193,8 @@ class AdControlService:
         try:
             from facebook_business.adobjects.adset import AdSet
 
-            # Ensure account ID has act_ prefix
-            if not ad_account_id.startswith("act_"):
-                ad_account_id = f"act_{ad_account_id}"
+            # Normalize account ID
+            ad_account_id = normalize_account_id(ad_account_id)
 
             # Get adset object
             adset = await get_ad_object(ad_account_id, adset_id)
@@ -245,9 +241,8 @@ class AdControlService:
             Dictionary containing activities list
         """
         try:
-            # Ensure account ID has act_ prefix
-            if not ad_account_id.startswith("act_"):
-                ad_account_id = f"act_{ad_account_id}"
+            # Normalize account ID
+            ad_account_id = normalize_account_id(ad_account_id)
 
             # Get account object
             account = await get_ad_object(ad_account_id, ad_account_id)
@@ -308,9 +303,8 @@ class AdControlService:
             if not daily_budget and not lifetime_budget:
                 raise ValueError("Must specify either daily_budget or lifetime_budget")
 
-            # Ensure account ID has act_ prefix
-            if not ad_account_id.startswith("act_"):
-                ad_account_id = f"act_{ad_account_id}"
+            # Normalize account ID
+            ad_account_id = normalize_account_id(ad_account_id)
 
             # Get adset object
             adset = await get_ad_object(ad_account_id, adset_id)

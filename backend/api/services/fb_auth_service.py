@@ -15,6 +15,7 @@ from facebook_business.exceptions import FacebookRequestError
 from fastapi.concurrency import run_in_threadpool
 
 from api.models.fb_auth import FbAdAccountModel, FbAppAuthSyncResult
+from utils.account_id import normalize_account_id
 from utils.db import ADAccountDocument, FbAppAuthDocument, FbAppTokenInfoDocument
 from utils.schemas.ad_account import FbAppSeedInfo, FbAppTokenInfo
 
@@ -68,10 +69,6 @@ def _as_utc(dt: datetime | None) -> datetime | None:
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc)
     return dt.replace(tzinfo=timezone.utc)
-
-
-def _ensure_act_prefix(account_id: str) -> str:
-    return account_id if account_id.startswith("act_") else f"act_{account_id}"
 
 
 def _fetch_user_name(
@@ -151,7 +148,7 @@ def _fetch_token_info_and_accounts(seed_info: FbAppSeedInfo) -> _TokenSyncPayloa
             continue
         accounts.append(
             {
-                "id": _ensure_act_prefix(str(account_id)),
+                "id": normalize_account_id(str(account_id)),
                 "name": account.get("name") or str(account_id),
             }
         )

@@ -10,6 +10,7 @@ from pymongo import UpdateOne
 
 from facebook_business.exceptions import FacebookRequestError
 
+from utils.account_id import normalize_account_id, remove_account_id_prefix
 from utils.db import (
     AdEntityNamesDocument,
     get_document_collection,
@@ -169,10 +170,8 @@ class EntityNamesSyncService:
                 f"最多一次同步 {MAX_ENTITY_NAME_BATCH_SIZE} 个实体，请分批请求"
             )
 
-        account_id_with_prefix = (
-            account_id if account_id.startswith("act_") else f"act_{account_id}"
-        )
-        account_id_without_prefix = account_id.replace("act_", "")
+        account_id_with_prefix = normalize_account_id(account_id)
+        account_id_without_prefix = remove_account_id_prefix(account_id)
 
         synced = 0
         failed = 0

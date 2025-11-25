@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-NOTE: 我们目前通过 http 目录部署开发和生产环境，由 traefik 代理，监听 8080 端口，fb-dev.${DOMAIN} 直连后端，fb.${DOMAIN} 走 OIDC 认证, 使用 cloudflare tunnel 暴露到公网。开发模式可以通过：`curl --resolve fb-dev.moondeity.dpdns.org:8080:127.0.0.1 http://fb-dev.moondeity.dpdns.org:8080` 类似的方式免登陆请求服务，支持`curl --resolve fb-dev.moondeity.dpdns.org:8080:127.0.0.1 http://fb-dev.moondeity.dpdns.org:8080/docs`
+NOTE: 我们目前通过 http 目录部署开发和生产环境，由 traefik 代理，监听 8080 端口，fb-dev.${DOMAIN} 直连后端，fb.${DOMAIN} 走 OIDC 认证, 使用 cloudflare tunnel 暴露到公网。开发模式可以通过：`curl --resolve fb-dev.moondeity.dpdns.org:8080:127.0.0.1 http://fb-dev.moondeity.dpdns.org:8080` 类似的方式免登陆请求服务，支持`curl --resolve fb-dev.moondeity.dpdns.org:8080:127.0.0.1 http://fb-dev.moondeity.dpdns.org:8080/docs`。注意 Rust 层的错误隔离机制，若代码修改触发语法错误，Granian 不会直接崩溃，而是保留旧进程提供服务。
 
 ## Project Overview
 

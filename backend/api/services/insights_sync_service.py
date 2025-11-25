@@ -26,6 +26,7 @@ from utils.db import (
     get_all_ad_account_documents,
     get_document_collection,
 )
+from utils.account_id import normalize_account_id
 from utils.fb_api_flyweight_factory import get_ad_object
 from utils.insight_tool import ATOMIC_FIELDS, get_atomic_metric, get_daily_insight
 
@@ -46,10 +47,6 @@ INSIGHT_FIELDS = [
     "ad_id",
     *ATOMIC_FIELDS,
 ]
-
-
-def _normalize_account_id(account_id: str) -> str:
-    return account_id if account_id.startswith("act_") else f"act_{account_id}"
 
 
 def _to_date(value: str) -> date:
@@ -459,11 +456,11 @@ class InsightsSyncService:
 
         accounts = await get_all_ad_account_documents(fetch_links=True)
         if account_ids:
-            normalized_targets = {_normalize_account_id(acc_id) for acc_id in account_ids}
+            normalized_targets = {normalize_account_id(acc_id) for acc_id in account_ids}
             accounts = [
                 account
                 for account in accounts
-                if _normalize_account_id(account.id) in normalized_targets
+                if normalize_account_id(account.id) in normalized_targets
             ]
 
         if not accounts:
@@ -501,7 +498,7 @@ class InsightsSyncService:
         processed: dict[str, dict[str, Any]] = {}
         failures: dict[str, str] = {}
         for account, range_start, range_end in accounts:
-            account_id = _normalize_account_id(account.id)
+            account_id = normalize_account_id(account.id)
             range_payload = {
                 "since": range_start.isoformat(),
                 "until": range_end.isoformat(),
@@ -577,7 +574,7 @@ class InsightsSyncService:
         processed: dict[str, dict[str, Any]] = {}
         failures: dict[str, str] = {}
         range_lookup = {
-            _normalize_account_id(account.id): (range_start, range_end)
+            normalize_account_id(account.id): (range_start, range_end)
             for account, range_start, range_end in accounts
         }
         jobs, launch_failures = await _launch_async_jobs(accounts)
@@ -684,7 +681,7 @@ async def _launch_async_jobs(
     jobs: list[AsyncJobWrapper] = []
     failures: dict[str, str] = {}
     for account, range_start, range_end in accounts:
-        account_id = _normalize_account_id(account.id)
+        account_id = normalize_account_id(account.id)
         try:
             ad_object = await get_ad_object(account_id, account_id)
             job = await asyncio.to_thread(

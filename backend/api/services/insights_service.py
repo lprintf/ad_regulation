@@ -20,6 +20,7 @@ from utils.db import (
     InsightsSyncStateDocument,
     get_document_collection
 )
+from utils.account_id import normalize_account_id, remove_account_id_prefix
 from utils.fb_api_flyweight_factory import get_ad_object, get_api
 from utils.insight_tool import ATOMIC_FIELDS, get_insight
 from utils.redis_client import get_insights_from_cache
@@ -198,7 +199,7 @@ async def _get_insights_from_redis_range(
                         insight["date"] = date_str
                 # Ensure ad_account_id is present
                 if "ad_account_id" not in insight and "account_id" in insight:
-                    insight["ad_account_id"] = InsightsService._normalize_account_id(insight["account_id"])
+                    insight["ad_account_id"] = normalize_account_id(insight["account_id"])
             insights_list.extend(daily_insights)
             logger.debug(f"Retrieved {len(daily_insights)} insights from Redis for {account_id} on {date_str}")
         except Exception as exc:
@@ -211,22 +212,6 @@ async def _get_insights_from_redis_range(
 
 class InsightsService:
     """Service for fetching and processing Facebook Ads Insights data."""
-
-    @staticmethod
-    def _normalize_account_id(account_id: str) -> str:
-        """
-        Ensure the ad account ID uses the act_ prefix expected by the Facebook SDK.
-
-        Args:
-            account_id: Raw ad account ID provided by caller
-
-        Returns:
-            Normalized account ID starting with act_
-        """
-        if not account_id:
-            raise ValueError("ad_account_id is required")
-        stripped = account_id.strip()
-        return stripped if stripped.startswith("act_") else f"act_{stripped.lstrip('act_')}"
 
     @staticmethod
     def _validate_date(date_str: str, field_name: str) -> None:
@@ -281,9 +266,9 @@ class InsightsService:
             Exception: If Facebook API call fails
         """
         # Normalize account ID
-        account_id = InsightsService._normalize_account_id(ad_account_id)
+        account_id = normalize_account_id(ad_account_id)
         # Remove act_ prefix for database query (DB stores account_id without prefix)
-        account_id_without_prefix = account_id.replace("act_", "") if account_id.startswith("act_") else account_id
+        account_id_without_prefix = remove_account_id_prefix(account_id)
 
         # Validate dates
         since_date = InsightsService._parse_date(since, "since date")
@@ -443,10 +428,8 @@ class InsightsService:
         Fetch insights by automatically setting the realtime window to
         (last_synced_until + 1 day) → requested until.
         """
-        account_id = InsightsService._normalize_account_id(ad_account_id)
-        account_id_without_prefix = (
-            account_id.replace("act_", "") if account_id.startswith("act_") else account_id
-        )
+        account_id = normalize_account_id(ad_account_id)
+        account_id_without_prefix = remove_account_id_prefix(account_id)
 
         until_date = InsightsService._parse_date(until, "until date")
         state = await InsightsSyncStateDocument.find_one(
@@ -537,7 +520,7 @@ class InsightsService:
         This mirrors the old frontend hybrid merge while keeping deduplication server-side.
         """
 
-        account_id = InsightsService._normalize_account_id(ad_account_id)
+        account_id = normalize_account_id(ad_account_id)
 
         db_task = InsightsService.query_insights_mongo_only(
             ad_account_id=account_id,
@@ -631,11 +614,7 @@ class InsightsService:
             Exception: If Facebook API call fails
         """
         # Normalize account ID
-        account_id = (
-            ad_account_id
-            if ad_account_id.startswith("act_")
-            else f"act_{ad_account_id}"
-        )
+        account_id = normalize_account_id(ad_account_id)
 
         # Validate dates
         InsightsService._validate_date(since, "since date")
@@ -705,11 +684,7 @@ class InsightsService:
             Exception: If Facebook API call fails
         """
         # Normalize account ID
-        account_id = (
-            ad_account_id
-            if ad_account_id.startswith("act_")
-            else f"act_{ad_account_id}"
-        )
+        account_id = normalize_account_id(ad_account_id)
 
         try:
             # Get API instance for this ad account
@@ -773,11 +748,7 @@ class InsightsService:
             Exception: If Facebook API call fails
         """
         # Normalize account ID
-        account_id = (
-            ad_account_id
-            if ad_account_id.startswith("act_")
-            else f"act_{ad_account_id}"
-        )
+        account_id = normalize_account_id(ad_account_id)
 
         try:
             # Get API instance for this ad account
@@ -849,7 +820,7 @@ class InsightsService:
 
         for _, row in df.iterrows():
             insight_record = {
-                "ad_account_id": InsightsService._normalize_account_id(
+                "ad_account_id": normalize_account_id(
                     str(row["account_id"])
                 )
                 if has_account_id and row.get("account_id") is not None
@@ -945,7 +916,7 @@ class InsightsService:
     @staticmethod
     def _document_to_insight(doc: InsightsDailyDocument) -> dict[str, Any]:
         """Convert InsightsDailyDocument to insight dictionary."""
-        account_id = InsightsService._normalize_account_id(doc.account_id)
+        account_id = normalize_account_id(doc.account_id)
         return {
             "ad_account_id": account_id,
             "ad_id": doc.ad_id,
@@ -990,7 +961,7 @@ class InsightsService:
         if not records:
             return records
 
-        normalized_account_id = InsightsService._normalize_account_id(account_id)
+        normalized_account_id = normalize_account_id(account_id)
         group_field_map = {
             "account": None,
             "campaign": "campaign_id",
@@ -1192,9 +1163,9 @@ class InsightsService:
         """
         # Normalize account ID and remove act_ prefix for database query
         # Database stores account_id without act_ prefix (e.g., "1244295750378353")
-        account_id = InsightsService._normalize_account_id(ad_account_id)
+        account_id = normalize_account_id(ad_account_id)
         # Remove act_ prefix for database query
-        account_id_without_prefix = account_id.replace("act_", "") if account_id.startswith("act_") else account_id
+        account_id_without_prefix = remove_account_id_prefix(account_id)
 
         # Validate dates
         since_date = InsightsService._parse_date(since, "since date")
@@ -1462,8 +1433,8 @@ class InsightsService:
             ValueError: If parameters are invalid or unsupported features are requested
         """
         # Normalize account ID and remove act_ prefix for database query
-        account_id = InsightsService._normalize_account_id(ad_account_id)
-        account_id_without_prefix = account_id.replace("act_", "") if account_id.startswith("act_") else account_id
+        account_id = normalize_account_id(ad_account_id)
+        account_id_without_prefix = remove_account_id_prefix(account_id)
 
         # Validate dates
         since_date = InsightsService._parse_date(since, "since date")
