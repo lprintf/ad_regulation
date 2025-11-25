@@ -1406,10 +1406,6 @@ const InsightsDataPage = () => {
       setFormError('起始日期不能晚于结束日期')
       return
     }
-    if (selectedAccountIds.size === 0) {
-      setFormError('请至少选择一个广告账号')
-      return
-    }
     const submittedParams: SubmittedParams = {
       since: sinceDate,
       until: untilDate,
