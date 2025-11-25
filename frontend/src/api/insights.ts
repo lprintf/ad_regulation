@@ -4,8 +4,148 @@ import type {
   InsightRecord,
   InsightsDataResponse,
   InsightSyncStatus,
-  InsightSyncTriggerResult
+  InsightSyncTriggerResult,
+  SyncOverviewResponse,
+  SyncOverviewItem,
+  SyncHistoryListResponse,
+  SyncHistoryRecord
 } from '../types/insights'
+
+// ===== New Sync Management API =====
+
+const mapSyncOverviewItemFromApi = (item: any): SyncOverviewItem => {
+  return {
+    accountId: item?.account_id ?? item?.accountId ?? '',
+    accountName: item?.account_name ?? item?.accountName ?? null,
+    status: (item?.status ?? 'pending') as InsightSyncStatus,
+    lastSyncedAt: item?.last_synced_at ?? item?.lastSyncedAt ?? null,
+    lastSyncedDate: item?.last_synced_date ?? item?.lastSyncedDate ?? null,
+    // MongoDB 数据覆盖范围
+    mongodbCoverageSince: item?.mongodb_coverage_since ?? item?.mongodbCoverageSince ?? null,
+    mongodbCoverageUntil: item?.mongodb_coverage_until ?? item?.mongodbCoverageUntil ?? null,
+    // Redis 缓存覆盖范围
+    redisCacheSince: item?.redis_cache_since ?? item?.redisCacheSince ?? null,
+    redisCacheUntil: item?.redis_cache_until ?? item?.redisCacheUntil ?? null,
+    redisCacheUpdatedAt: item?.redis_cache_updated_at ?? item?.redisCacheUpdatedAt ?? null,
+    lastError: item?.last_error ?? item?.lastError ?? null,
+    isRunning: Boolean(item?.is_running ?? item?.isRunning ?? false),
+    lastHistoryId: item?.last_history_id ?? item?.lastHistoryId ?? null
+  }
+}
+
+const mapSyncHistoryRecordFromApi = (item: any): SyncHistoryRecord => {
+  return {
+    id: item?.id ?? '',
+    accountId: item?.account_id ?? item?.accountId ?? '',
+    accountName: item?.account_name ?? item?.accountName ?? null,
+    triggerType: (item?.trigger_type ?? item?.triggerType ?? 'manual') as 'manual' | 'auto' | 'retry',
+    triggeredBy: item?.triggered_by ?? item?.triggeredBy ?? null,
+    since: item?.since ?? '',
+    until: item?.until ?? '',
+    mode: (item?.mode ?? 'sync') as 'sync' | 'async',
+    dataTarget: (item?.data_target ?? item?.dataTarget ?? 'mongodb') as 'mongodb' | 'redis' | 'hybrid',
+    status: (item?.status ?? 'pending') as InsightSyncStatus,
+    startedAt: item?.started_at ?? item?.startedAt ?? '',
+    completedAt: item?.completed_at ?? item?.completedAt ?? null,
+    recordsCount: Number(item?.records_count ?? item?.recordsCount ?? 0),
+    errorMessage: item?.error_message ?? item?.errorMessage ?? null,
+    durationSeconds: item?.duration_seconds ?? item?.durationSeconds ?? null,
+    percentComplete: Number(item?.percent_complete ?? item?.percentComplete ?? 0),
+    totalDays: Number(item?.total_days ?? item?.totalDays ?? 0),
+    processedDays: Number(item?.processed_days ?? item?.processedDays ?? 0)
+  }
+}
+
+export const fetchSyncOverview = async (): Promise<SyncOverviewResponse> => {
+  const { data } = await apiClient.get('/insights/sync/overview')
+  const payload = data?.data ?? data ?? {}
+  const items = Array.isArray(payload?.items) ? payload.items : []
+  return {
+    items: items.map(mapSyncOverviewItemFromApi),
+    totalAccounts: Number(payload?.total_accounts ?? payload?.totalAccounts ?? items.length)
+  }
+}
+
+export interface SyncHistoryQueryParams {
+  accountId?: string
+  status?: InsightSyncStatus
+  triggerType?: 'manual' | 'auto' | 'retry'
+  page?: number
+  pageSize?: number
+}
+
+export const fetchSyncHistory = async (params: SyncHistoryQueryParams = {}): Promise<SyncHistoryListResponse> => {
+  const queryParams: Record<string, any> = {}
+  if (params.accountId) queryParams.account_id = params.accountId
+  if (params.status) queryParams.status = params.status
+  if (params.triggerType) queryParams.trigger_type = params.triggerType
+  if (params.page) queryParams.page = params.page
+  if (params.pageSize) queryParams.page_size = params.pageSize
+
+  const { data } = await apiClient.get('/insights/sync/history', { params: queryParams })
+  const payload = data?.data ?? data ?? {}
+  const items = Array.isArray(payload?.items) ? payload.items : []
+
+  return {
+    items: items.map(mapSyncHistoryRecordFromApi),
+    total: Number(payload?.total ?? 0),
+    page: Number(payload?.page ?? 1),
+    pageSize: Number(payload?.page_size ?? payload?.pageSize ?? 50)
+  }
+}
+
+export const fetchSyncHistoryDetail = async (historyId: string): Promise<SyncHistoryRecord> => {
+  const { data } = await apiClient.get(`/insights/sync/history/${historyId}`)
+  const payload = data?.data ?? data ?? {}
+  return mapSyncHistoryRecordFromApi(payload)
+}
+
+export const triggerSync = async (payload: {
+  accountIds?: string[]
+  since: string
+  until: string
+}): Promise<InsightSyncTriggerResult> => {
+  const requestBody = {
+    account_ids: payload.accountIds,
+    since: payload.since,
+    until: payload.until
+  }
+
+  const { data } = await apiClient.post('/insights/sync/trigger', requestBody)
+  const body = data?.data ?? data ?? {}
+  const total =
+    body?.total_accounts ??
+    body?.totalAccounts ??
+    Object.keys(body?.processed_accounts ?? body?.processedAccounts ?? {}).length
+
+  const processedSource =
+    body?.processed_accounts ?? body?.processedAccounts ?? ({} as Record<string, any>)
+  const processedEntries = Object.entries(processedSource).map(([accountId, summary]) => {
+    const normalized = (summary ?? {}) as Record<string, any>
+    return [
+      accountId,
+      {
+        mode: normalized.mode ?? 'unknown',
+        since: normalized.since ?? '',
+        until: normalized.until ?? '',
+        records: Number(normalized.records ?? 0),
+        trigger: normalized.trigger ?? null,
+        triggeredBy: normalized.triggered_by ?? normalized.triggeredBy ?? null
+      }
+    ]
+  })
+
+  const failedSource =
+    body?.failed_accounts ?? body?.failedAccounts ?? ({} as Record<string, string>)
+
+  return {
+    totalAccounts: Number(total ?? 0),
+    processedAccounts: Object.fromEntries(processedEntries),
+    failedAccounts: failedSource as Record<string, string>
+  }
+}
+
+// ===== Legacy/Deprecated Sync API =====
 
 const mapAccountStatusFromApi = (item: any): InsightAccountSyncStatus => {
   const status = (item?.status ?? 'pending') as InsightSyncStatus

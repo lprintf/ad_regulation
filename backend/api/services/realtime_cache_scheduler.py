@@ -14,6 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from api.services.insights_sync_service import _fetch_insights_sync
+from api.services.sync_history_service import SyncHistoryService
 from config import REALTIME_CACHE_SYNC_INTERVAL_MINUTES
 from utils.db import get_all_ad_account_documents, InsightsSyncStateDocument
 from utils.redis_client import cache_insights_for_date
@@ -78,6 +79,23 @@ async def _sync_realtime_insights():
                     f"Syncing cache for {account_id} from {cache_start_date.isoformat()} to {today.isoformat()}"
                 )
 
+                # Create sync history record
+                history = await SyncHistoryService.create_history_record(
+                    account_id=account.id,
+                    account_name=account.name,
+                    trigger_type="auto",
+                    triggered_by="realtime_cache_scheduler",
+                    since=cache_start_date,
+                    until=today,
+                    mode="sync",
+                    data_target="redis",
+                )
+
+                # Track the actual range that was synced
+                first_synced_date = None
+                last_synced_date = None
+                synced_records = 0
+
                 # Sync each date in the range
                 current_date = cache_start_date
                 while current_date <= today:
@@ -98,6 +116,13 @@ async def _sync_realtime_insights():
 
                         total_synced += cached_count
                         total_date_ranges += 1
+                        synced_records += cached_count
+
+                        # Track the actual range
+                        if first_synced_date is None:
+                            first_synced_date = current_date
+                        last_synced_date = current_date
+
                         logger.debug(
                             f"Cached {cached_count} insights for {account_id} on {current_date.isoformat()}"
                         )
@@ -110,9 +135,65 @@ async def _sync_realtime_insights():
 
                     current_date += timedelta(days=1)
 
+                # Update Redis cache status in InsightsSyncStateDocument
+                if first_synced_date and last_synced_date:
+                    try:
+                        now = datetime.utcnow()
+                        await InsightsSyncStateDocument.find_one(
+                            InsightsSyncStateDocument.account_id == account.id
+                        ).update(
+                            {
+                                "$set": {
+                                    "redis_cache_since": datetime.combine(first_synced_date, datetime.min.time()),
+                                    "redis_cache_until": datetime.combine(last_synced_date, datetime.min.time()),
+                                    "redis_cache_updated_at": now,
+                                    "updated_at": now,
+                                }
+                            },
+                            upsert=True,
+                        )
+                        logger.info(
+                            f"Updated Redis cache status for {account_id}: {first_synced_date} → {last_synced_date}"
+                        )
+
+                        # Update history record with success status
+                        await SyncHistoryService.update_history_status(
+                            history_id=history.id,
+                            status="success",
+                            records_count=synced_records,
+                        )
+                        logger.info(
+                            f"Updated sync history {history.id} for {account_id}: {synced_records} records synced"
+                        )
+                    except Exception as exc:
+                        logger.error(f"Failed to update Redis cache status for {account_id}: {exc}")
+                else:
+                    # If no data was synced, mark history as completed with 0 records
+                    try:
+                        await SyncHistoryService.update_history_status(
+                            history_id=history.id,
+                            status="success",
+                            records_count=0,
+                        )
+                    except Exception as exc:
+                        logger.error(f"Failed to update sync history for {account_id}: {exc}")
+
+
             except Exception as exc:
                 logger.exception(f"Failed to process account {account_id} for cache sync: {exc}")
                 total_failed += 1
+
+                # Mark history record as failed if one was created
+                try:
+                    if 'history' in locals():
+                        await SyncHistoryService.update_history_status(
+                            history_id=history.id,
+                            status="failed",
+                            records_count=synced_records if 'synced_records' in locals() else 0,
+                            error_message=str(exc),
+                        )
+                except Exception as history_exc:
+                    logger.error(f"Failed to update history record for {account_id}: {history_exc}")
 
         finished_at = datetime.utcnow()
         duration_seconds = (finished_at - started_at).total_seconds()
@@ -235,13 +316,20 @@ def resume_realtime_cache_scheduler_task() -> None:
 
 
 async def run_realtime_cache_scheduler_task_now() -> None:
-    """Manually trigger the realtime cache sync task immediately."""
+    """
+    Manually trigger the realtime cache sync task immediately.
+    Runs in the background to avoid blocking the HTTP response.
+    """
     if _scheduler is None:
         raise ValueError("Realtime cache scheduler is not running")
     job = _scheduler.get_job(JOB_ID)
     if job is None:
         raise ValueError("Realtime cache scheduler task not found")
-    await job.func(*job.args, **job.kwargs)
+
+    # Run in background to avoid blocking HTTP response
+    asyncio.create_task(job.func(*job.args, **job.kwargs))
+    logger.info("Realtime cache sync task triggered manually (running in background)")
+
 
 
 def update_realtime_cache_scheduler_task(

@@ -1,5 +1,63 @@
 export type InsightSyncStatus = 'pending' | 'running' | 'success' | 'failed'
 
+export type TriggerType = 'manual' | 'auto' | 'retry'
+
+export type SyncMode = 'sync' | 'async'
+
+export type DataTarget = 'mongodb' | 'redis' | 'hybrid'
+
+export interface SyncHistoryRecord {
+  id: string
+  accountId: string
+  accountName?: string | null
+  triggerType: TriggerType
+  triggeredBy?: string | null
+  since: string
+  until: string
+  mode: SyncMode
+  dataTarget: DataTarget
+  status: InsightSyncStatus
+  startedAt: string
+  completedAt?: string | null
+  recordsCount: number
+  errorMessage?: string | null
+  durationSeconds?: number | null
+  percentComplete: number
+  totalDays: number
+  processedDays: number
+}
+
+export interface SyncHistoryListResponse {
+  items: SyncHistoryRecord[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export interface SyncOverviewItem {
+  accountId: string
+  accountName?: string | null
+  status: InsightSyncStatus
+  lastSyncedAt?: string | null
+  lastSyncedDate?: string | null
+  // MongoDB 数据覆盖范围
+  mongodbCoverageSince?: string | null
+  mongodbCoverageUntil?: string | null
+  // Redis 缓存覆盖范围
+  redisCacheSince?: string | null
+  redisCacheUntil?: string | null
+  redisCacheUpdatedAt?: string | null
+  lastError?: string | null
+  isRunning: boolean
+  lastHistoryId?: string | null
+}
+
+export interface SyncOverviewResponse {
+  items: SyncOverviewItem[]
+  totalAccounts: number
+}
+
+// Keep for backward compatibility
 export interface InsightAccountSyncStatus {
   accountId: string
   accountName?: string | null

@@ -269,6 +269,121 @@ class SyncStatus(str, Enum):
     FAILED = "failed"
 
 
+class TriggerType(str, Enum):
+    """Trigger type for sync operations."""
+
+    MANUAL = "manual"
+    AUTO = "auto"
+    RETRY = "retry"
+
+
+class SyncMode(str, Enum):
+    """Sync execution mode."""
+
+    SYNC = "sync"
+    ASYNC = "async"
+
+
+class DataTarget(str, Enum):
+    """Data storage target."""
+
+    MONGODB = "mongodb"
+    REDIS = "redis"
+    HYBRID = "hybrid"
+
+
+class SyncHistoryRecord(BaseModel):
+    """Single sync history record."""
+
+    id: str = Field(..., description="Sync history record ID")
+    account_id: str = Field(..., description="Ad account ID")
+    account_name: str | None = Field(None, description="Ad account display name")
+    trigger_type: TriggerType = Field(..., description="How the sync was triggered")
+    triggered_by: str | None = Field(None, description="User ID who triggered the sync")
+    since: str = Field(..., description="Sync start date (YYYY-MM-DD)")
+    until: str = Field(..., description="Sync end date (YYYY-MM-DD)")
+    mode: SyncMode = Field(..., description="Execution mode (sync or async)")
+    data_target: DataTarget = Field(..., description="Data storage target (mongodb/redis/hybrid)")
+    status: SyncStatus = Field(..., description="Current sync status")
+    started_at: str = Field(..., description="When the sync started")
+    completed_at: str | None = Field(None, description="When the sync completed")
+    records_count: int = Field(..., description="Number of records synced")
+    error_message: str | None = Field(None, description="Error message if failed")
+    duration_seconds: float | None = Field(None, description="Duration in seconds")
+    percent_complete: int = Field(
+        ..., description="Progress percentage (0-100)", ge=0, le=100
+    )
+    total_days: int = Field(..., description="Total number of days to sync")
+    processed_days: int = Field(..., description="Number of days processed")
+
+
+class SyncHistoryListResponse(BaseModel):
+    """Response for sync history list."""
+
+    items: list[SyncHistoryRecord] = Field(..., description="List of sync history records")
+    total: int = Field(..., description="Total number of records")
+    page: int = Field(..., description="Current page number")
+    page_size: int = Field(..., description="Records per page")
+
+
+class SyncProgress(BaseModel):
+    """Current sync progress for an account."""
+
+    account_id: str = Field(..., description="Ad account ID")
+    account_name: str | None = Field(None, description="Ad account display name")
+    status: SyncStatus = Field(..., description="Current sync status")
+    percent_complete: int = Field(
+        ..., description="Progress percentage (0-100)", ge=0, le=100
+    )
+    current_date: str | None = Field(None, description="Currently processing date")
+    total_days: int = Field(..., description="Total number of days to sync")
+    processed_days: int = Field(..., description="Number of days processed")
+    estimated_remaining_seconds: float | None = Field(
+        None, description="Estimated remaining time in seconds"
+    )
+    last_updated: str = Field(..., description="Last update timestamp")
+
+
+class SyncOverviewItem(BaseModel):
+    """Sync overview item for a single account."""
+
+    account_id: str = Field(..., description="Ad account ID")
+    account_name: str | None = Field(None, description="Ad account display name")
+    status: SyncStatus = Field(..., description="Current sync status")
+    last_synced_at: str | None = Field(None, description="Last successful sync timestamp")
+    last_synced_date: str | None = Field(None, description="Last synced date (YYYY-MM-DD)")
+
+    # MongoDB 数据覆盖范围
+    mongodb_coverage_since: str | None = Field(
+        None, description="MongoDB earliest available data date (YYYY-MM-DD)"
+    )
+    mongodb_coverage_until: str | None = Field(
+        None, description="MongoDB latest available data date (YYYY-MM-DD)"
+    )
+
+    # Redis 缓存覆盖范围
+    redis_cache_since: str | None = Field(
+        None, description="Redis cache earliest available data date (YYYY-MM-DD)"
+    )
+    redis_cache_until: str | None = Field(
+        None, description="Redis cache latest available data date (YYYY-MM-DD)"
+    )
+    redis_cache_updated_at: str | None = Field(
+        None, description="Redis cache last update timestamp"
+    )
+
+    last_error: str | None = Field(None, description="Last error message if any")
+    is_running: bool = Field(..., description="Whether a sync is currently running")
+    last_history_id: str | None = Field(None, description="ID of the most recent sync history")
+
+
+class SyncOverviewResponse(BaseModel):
+    """Response for sync overview."""
+
+    items: list[SyncOverviewItem] = Field(..., description="List of account sync overviews")
+    total_accounts: int = Field(..., description="Total number of accounts")
+
+
 class InsightAccountSyncStatus(BaseModel):
     """Per-account insights sync state."""
 

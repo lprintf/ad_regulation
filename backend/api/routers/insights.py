@@ -25,12 +25,17 @@ from api.models.insights import (
     InsightsSyncRequest,
     InsightsSyncTriggerRequest,
     InsightsSyncTriggerResponse,
+    SyncHistoryListResponse,
+    SyncHistoryRecord,
+    SyncOverviewItem,
+    SyncOverviewResponse,
     SyncStatus,
 )
 from api.models.responses import SuccessResponse
 from api.services.insights_service import InsightsService
 from api.services.insights_sync_service import InsightsSyncService
 from api.services.entity_names_sync_service import EntityNamesSyncService
+from api.services.sync_history_service import SyncHistoryService
 
 router = APIRouter(prefix="/insights", tags=["Insights"])
 
@@ -661,7 +666,188 @@ async def query_insights_from_last_gap_post(
     return await _execute_query_from_last(request)
 
 
-@router.get("/sync/runs", response_model=SuccessResponse[InsightsAccountSyncResponse])
+@router.get("/sync/overview", response_model=SuccessResponse[SyncOverviewResponse])
+async def get_sync_overview(
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[SyncOverviewResponse]:
+    """
+    Get sync overview for all ad accounts.
+    Shows current sync status, data coverage, and last sync information.
+
+    Returns:
+        SuccessResponse containing sync overview for all accounts
+    """
+    try:
+        items_data = await SyncHistoryService.get_sync_overview()
+
+        items = [SyncOverviewItem(**item) for item in items_data]
+
+        return SuccessResponse(
+            data=SyncOverviewResponse(
+                items=items,
+                total_accounts=len(items),
+            ),
+            message=f"Retrieved sync overview for {len(items)} accounts",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get sync overview: {str(e)}",
+        )
+
+
+@router.get("/sync/history", response_model=SuccessResponse[SyncHistoryListResponse])
+async def get_sync_history(
+    account_id: Annotated[
+        str | None,
+        Query(description="Filter by account ID (optional)"),
+    ] = None,
+    sync_status: Annotated[
+        str | None,
+        Query(
+            alias="status",
+            description="Filter by status (pending/running/success/failed)",
+        ),
+    ] = None,
+    trigger_type: Annotated[
+        str | None,
+        Query(description="Filter by trigger type (manual/auto/retry)"),
+    ] = None,
+    page: Annotated[int, Query(description="Page number (1-indexed)", ge=1)] = 1,
+    page_size: Annotated[
+        int, Query(description="Records per page", ge=1, le=100)
+    ] = 50,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[SyncHistoryListResponse]:
+    """
+    Get paginated sync history records with optional filters.
+
+    Args:
+        account_id: Filter by account ID
+        sync_status: Filter by status
+        trigger_type: Filter by trigger type
+        page: Page number (1-indexed)
+        page_size: Records per page (max 100)
+        user_id: Current user ID
+
+    Returns:
+        SuccessResponse containing paginated sync history
+    """
+    try:
+        items_data, total = await SyncHistoryService.get_history_list(
+            account_id=account_id,
+            status=sync_status,
+            trigger_type=trigger_type,
+            page=page,
+            page_size=page_size,
+        )
+
+        items = [SyncHistoryRecord(**item) for item in items_data]
+
+        return SuccessResponse(
+            data=SyncHistoryListResponse(
+                items=items,
+                total=total,
+                page=page,
+                page_size=page_size,
+            ),
+            message=f"Retrieved {len(items)} sync history records (page {page}/{(total + page_size - 1) // page_size})",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get sync history: {str(e)}",
+        )
+
+
+@router.get("/sync/history/{history_id}", response_model=SuccessResponse[SyncHistoryRecord])
+async def get_sync_history_detail(
+    history_id: str,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[SyncHistoryRecord]:
+    """
+    Get detailed information for a single sync history record.
+
+    Args:
+        history_id: Sync history record ID
+        user_id: Current user ID
+
+    Returns:
+        SuccessResponse containing sync history details
+    """
+    try:
+        history_data = await SyncHistoryService.get_history_by_id(history_id)
+
+        if not history_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Sync history record {history_id} not found",
+            )
+
+        return SuccessResponse(
+            data=SyncHistoryRecord(**history_data),
+            message="Retrieved sync history details",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get sync history details: {str(e)}",
+        )
+
+
+@router.post("/sync/trigger", response_model=SuccessResponse[InsightsSyncTriggerResponse])
+async def trigger_sync(
+    request: InsightsSyncTriggerRequest,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[InsightsSyncTriggerResponse]:
+    """
+    Manually trigger insights synchronization for selected accounts.
+    Creates sync history records and initiates the sync process.
+
+    Args:
+        request: Sync trigger request with account_ids, since, until
+        user_id: Current user ID
+
+    Returns:
+        SuccessResponse with trigger result summary
+    """
+    try:
+        since_date = datetime.strptime(request.since, "%Y-%m-%d").date()
+        until_date = datetime.strptime(request.until, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date format. Expect YYYY-MM-DD.",
+        ) from exc
+
+    try:
+        result = await InsightsSyncService.trigger_manual_sync(
+            account_ids=request.account_ids,
+            since=since_date,
+            until=until_date,
+            triggered_by=user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    response = InsightsSyncTriggerResponse(
+        total_accounts=result.total_accounts,
+        processed_accounts=result.processed_accounts,
+        failed_accounts=result.failed_accounts,
+    )
+    message = (
+        f"Triggered sync for {result.total_accounts} account(s): "
+        f"processed {len(result.processed_accounts)}, "
+        f"failed {len(result.failed_accounts)}"
+    )
+    return SuccessResponse(data=response, message=message)
+
+
+# ===== DEPRECATED: Old sync endpoint for backward compatibility =====
+
+@router.get("/sync/runs", deprecated=True, response_model=SuccessResponse[InsightsAccountSyncResponse])
 async def list_sync_runs(
     user_id: Annotated[str, Depends(get_current_user)] = None,
 ) -> SuccessResponse[InsightsAccountSyncResponse]:
@@ -700,7 +886,9 @@ async def list_sync_runs(
     )
 
 
-@router.post("/sync/runs", response_model=SuccessResponse[InsightsSyncTriggerResponse])
+# ===== DEPRECATED: Old sync endpoint - use /sync/trigger instead =====
+
+@router.post("/sync/runs", deprecated=True, response_model=SuccessResponse[InsightsSyncTriggerResponse])
 async def trigger_sync_run(
     request: InsightsSyncTriggerRequest,
     user_id: Annotated[str, Depends(get_current_user)] = None,

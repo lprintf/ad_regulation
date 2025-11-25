@@ -199,8 +199,16 @@ class InsightsSyncStateDocument(Document):
     last_synced_at: datetime | None = None
     last_synced_date: datetime | None = None
     initial_requested_since: datetime | None = None
+
+    # MongoDB 数据覆盖范围（历史数据）
     obs_since: datetime | None = None
     obs_until: datetime | None = None
+
+    # Redis 缓存覆盖范围（实时数据）
+    redis_cache_since: datetime | None = None
+    redis_cache_until: datetime | None = None
+    redis_cache_updated_at: datetime | None = None
+
     last_status: Literal["idle", "running", "success", "failed"] = "idle"
     last_error: str | None = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -240,6 +248,61 @@ class AdEntityNamesDocument(Document):
         ]
 
 
+class SyncHistoryDocument(Document):
+    """
+    洞察同步历史记录
+    每次同步任务（无论成功或失败）都会创建一条记录
+    """
+    # 基本信息
+    account_id: str
+    account_name: str | None = None
+
+    # 触发信息
+    trigger_type: Literal["manual", "auto", "retry"] = "manual"
+    triggered_by: str | None = None
+
+    # 同步范围
+    since: datetime  # 同步开始日期
+    until: datetime  # 同步结束日期
+
+    # 执行模式
+    mode: Literal["sync", "async"] = "sync"
+
+    # 数据存储目标
+    data_target: Literal["mongodb", "redis", "hybrid"] = "mongodb"
+
+    # 状态信息
+    status: Literal["pending", "running", "success", "failed"] = "pending"
+
+    # 时间戳
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = None
+
+    # 结果统计
+    records_count: int = 0
+    error_message: str | None = None
+    duration_seconds: float | None = None
+
+    # 进度信息（用于异步任务）
+    percent_complete: int = 0
+    current_date: str | None = None
+    total_days: int = 0
+    processed_days: int = 0
+
+    # 额外元数据
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    class Settings:
+        name = "sync_history"
+        indexes = [
+            IndexModel("account_id"),
+            IndexModel([("account_id", 1), ("started_at", -1)]),
+            IndexModel([("status", 1), ("started_at", -1)]),
+            IndexModel("started_at"),
+            IndexModel([("trigger_type", 1), ("started_at", -1)]),
+        ]
+
+
 async def init_db(mongodb_url=MONGODB_URL):
     """Initialize MongoDB connection and Beanie ODM"""
     global mongo_client, mongo_database
@@ -263,6 +326,7 @@ async def init_db(mongodb_url=MONGODB_URL):
             InsightsSyncLogDocument,
             InsightsSyncStateDocument,
             AdEntityNamesDocument,
+            SyncHistoryDocument,
         ],
     )
 
