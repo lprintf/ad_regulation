@@ -26,4 +26,6 @@ output/
 test/
 tests/mocks/
 
-.vscode/.claude
+.vscode
+.claude
+docs/数据洞察页面要求.md
