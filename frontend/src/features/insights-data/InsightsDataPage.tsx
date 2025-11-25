@@ -311,8 +311,8 @@ const areArraysEqual = <T,>(a: T[], b: T[]) => {
 
 const getDefaultDateRange = () => {
   const today = new Date()
-  const until = new Date(today.getTime() - 3 * 24 * 60 * 60 * 1000)
-  const since = new Date(until)
+  const until = new Date(today)
+  const since = new Date(today)
   since.setDate(since.getDate() - 6)
   const format = (value: Date) => value.toISOString().slice(0, 10)
   return { since: format(since), until: format(until) }
