@@ -563,7 +563,7 @@ const InsightsDataPage = () => {
           }
         }
       }
-      const shouldRequestRealtimeFields = lastSubmittedParams.source !== 'database'
+      const shouldRequestRealtimeFields = lastSubmittedParams.source === 'realtime' || lastSubmittedParams.source === 'mongo_from_last'
       return {
         accountId,
         since: lastSubmittedParams.since,
@@ -670,7 +670,7 @@ const InsightsDataPage = () => {
         activeLevel,
         lastSubmittedParams?.since ?? '',
         lastSubmittedParams?.until ?? '',
-        lastSubmittedParams?.source ?? 'database',
+        lastSubmittedParams?.source ?? 'mongo_redis',
         lastSubmittedParams?.timeIncrement ?? 'null',
         lastSubmittedParams?.breakdowns ?? '',
         objectFilterKey

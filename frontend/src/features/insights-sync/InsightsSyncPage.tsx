@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { fetchSyncOverview, fetchSyncHistory, triggerMongodbSync, triggerRedisSync } from '../../api/insights'
-import { formatDateTime, formatRelativeTime } from '../../lib/datetime'
+import { formatRelativeTime } from '../../lib/datetime'
 import type {
   InsightSyncStatus,
   SyncOverviewItem,
@@ -28,18 +28,6 @@ const triggerLabelMap: Record<string, string> = {
   retry: '重试'
 }
 
-const dataTargetLabelMap: Record<string, string> = {
-  mongodb: 'MongoDB',
-  redis: 'Redis',
-  hybrid: 'MongoDB + Redis'
-}
-
-const dataTargetColorMap: Record<string, string> = {
-  mongodb: 'var(--color-primary)',
-  redis: 'var(--color-success)',
-  hybrid: 'var(--color-warning)'
-}
-
 const InsightsSyncPage = () => {
   return (
     <div className="page">
@@ -62,8 +50,6 @@ const InsightsSyncPage = () => {
 // ===== Overview Section =====
 
 const OverviewSection = () => {
-  const queryClient = useQueryClient()
-
   const overviewQuery = useQuery({
     queryKey: ['sync-overview'],
     queryFn: fetchSyncOverview,
@@ -343,11 +329,11 @@ const HistoryModal = ({ title, historyQuery, onClose }: HistoryModalProps) => {
             <div>加载中…</div>
           ) : historyQuery.isError ? (
             <div style={{ color: 'var(--color-danger)' }}>加载失败</div>
-          ) : historyQuery.data?.items.length === 0 ? (
+          ) : !historyQuery.data || historyQuery.data.items.length === 0 ? (
             <div>暂无历史记录</div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {historyQuery.data?.items.map((record: SyncHistoryRecord) => (
+              {historyQuery.data.items.map((record: SyncHistoryRecord) => (
                 <div
                   key={record.id}
                   style={{

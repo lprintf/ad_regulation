@@ -423,26 +423,6 @@ const buildHybridPayload = (params: InsightsDataQuery) => ({
   cache_window_hint: buildCacheWindowHint()
 })
 
-const buildFromLastParams = (params: InsightsDataQuery) => {
-  const payload: Record<string, unknown> = {
-    ad_account_id: params.accountId,
-    until: params.until,
-    cache_window_hint: buildCacheWindowHint(),
-    ...buildCommonParams(params)
-  }
-  if (params.timeIncrement !== undefined) {
-    payload.time_increment = params.timeIncrement
-  }
-  if (params.breakdowns) {
-    payload.breakdowns = params.breakdowns
-  }
-  if (params.fields?.length) {
-    payload.fields = params.fields.join(',')
-  }
-  // Intentionally omit object filter parameters to maximize cache hits.
-  return payload
-}
-
 export const fetchInsightsData = async (params: InsightsDataQuery): Promise<InsightsDataResponse> => {
   if (params.source === 'mongo') {
     const { data } = await apiClient.get('/insights/query/mongo', { params: buildDbParams(params) })
