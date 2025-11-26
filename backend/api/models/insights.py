@@ -349,9 +349,11 @@ class SyncOverviewItem(BaseModel):
 
     account_id: str = Field(..., description="Ad account ID")
     account_name: str | None = Field(None, description="Ad account display name")
-    status: SyncStatus = Field(..., description="Current sync status")
-    last_synced_at: str | None = Field(None, description="Last successful sync timestamp")
-    last_synced_date: str | None = Field(None, description="Last synced date (YYYY-MM-DD)")
+
+    # MongoDB 同步状态
+    mongodb_status: SyncStatus = Field(..., description="MongoDB sync status")
+    mongodb_is_running: bool = Field(..., description="Whether MongoDB sync is running")
+    mongodb_last_synced_at: str | None = Field(None, description="Last successful MongoDB sync timestamp")
 
     # MongoDB 数据覆盖范围
     mongodb_coverage_since: str | None = Field(
@@ -360,6 +362,13 @@ class SyncOverviewItem(BaseModel):
     mongodb_coverage_until: str | None = Field(
         None, description="MongoDB latest available data date (YYYY-MM-DD)"
     )
+    mongodb_last_error: str | None = Field(None, description="Last MongoDB sync error message if any")
+    mongodb_last_history_id: str | None = Field(None, description="ID of the most recent MongoDB sync history")
+
+    # Redis 同步状态
+    redis_status: SyncStatus = Field(..., description="Redis cache sync status")
+    redis_is_running: bool = Field(..., description="Whether Redis cache sync is running")
+    redis_last_synced_at: str | None = Field(None, description="Last successful Redis sync timestamp")
 
     # Redis 缓存覆盖范围
     redis_cache_since: str | None = Field(
@@ -368,13 +377,8 @@ class SyncOverviewItem(BaseModel):
     redis_cache_until: str | None = Field(
         None, description="Redis cache latest available data date (YYYY-MM-DD)"
     )
-    redis_cache_updated_at: str | None = Field(
-        None, description="Redis cache last update timestamp"
-    )
-
-    last_error: str | None = Field(None, description="Last error message if any")
-    is_running: bool = Field(..., description="Whether a sync is currently running")
-    last_history_id: str | None = Field(None, description="ID of the most recent sync history")
+    redis_last_error: str | None = Field(None, description="Last Redis sync error message if any")
+    redis_last_history_id: str | None = Field(None, description="ID of the most recent Redis sync history")
 
 
 class SyncOverviewResponse(BaseModel):

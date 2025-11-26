@@ -3,7 +3,7 @@ Insights data endpoints.
 Provides API for fetching Facebook Ads Insights data (sync and async).
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -36,6 +36,7 @@ from api.services.insights_service import InsightsService
 from api.services.insights_sync_service import InsightsSyncService
 from api.services.entity_names_sync_service import EntityNamesSyncService
 from api.services.sync_history_service import SyncHistoryService
+from utils.account_id import normalize_account_id
 
 router = APIRouter(prefix="/insights", tags=["Insights"])
 
@@ -713,6 +714,10 @@ async def get_sync_history(
         str | None,
         Query(description="Filter by trigger type (manual/auto/retry)"),
     ] = None,
+    data_target: Annotated[
+        str | None,
+        Query(description="Filter by data target (mongodb/redis/hybrid)"),
+    ] = None,
     page: Annotated[int, Query(description="Page number (1-indexed)", ge=1)] = 1,
     page_size: Annotated[
         int, Query(description="Records per page", ge=1, le=100)
@@ -726,6 +731,7 @@ async def get_sync_history(
         account_id: Filter by account ID
         sync_status: Filter by status
         trigger_type: Filter by trigger type
+        data_target: Filter by data target (mongodb/redis/hybrid)
         page: Page number (1-indexed)
         page_size: Records per page (max 100)
         user_id: Current user ID
@@ -738,6 +744,7 @@ async def get_sync_history(
             account_id=account_id,
             status=sync_status,
             trigger_type=trigger_type,
+            data_target=data_target,
             page=page,
             page_size=page_size,
         )
@@ -843,6 +850,210 @@ async def trigger_sync(
         f"failed {len(result.failed_accounts)}"
     )
     return SuccessResponse(data=response, message=message)
+
+
+@router.post("/sync/trigger-account/{account_id}", response_model=SuccessResponse[dict])
+async def trigger_account_sync(
+    account_id: str,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[dict]:
+    """
+    Trigger sync for a single account with default time range (last 30 days).
+    DEPRECATED: Use /sync/trigger-mongodb or /sync/trigger-redis instead.
+
+    Args:
+        account_id: Account ID to sync (with or without act_ prefix)
+        user_id: Current user ID
+
+    Returns:
+        SuccessResponse with trigger result
+    """
+    # Use default time range: last 30 days
+    today = datetime.utcnow().date()
+    since_date = today - timedelta(days=30)
+
+    try:
+        result = await InsightsSyncService.trigger_manual_sync(
+            account_ids=[account_id],
+            since=since_date,
+            until=today,
+            triggered_by=user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    # Check if the account was processed or failed
+    if account_id in result.failed_accounts:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to trigger sync: {result.failed_accounts[account_id]}"
+        )
+
+    return SuccessResponse(
+        data={
+            "account_id": account_id,
+            "since": since_date.isoformat(),
+            "until": today.isoformat(),
+            "triggered": True
+        },
+        message=f"Successfully triggered sync for {account_id}"
+    )
+
+
+@router.post("/sync/trigger-mongodb/{account_id}", response_model=SuccessResponse[dict])
+async def trigger_mongodb_sync(
+    account_id: str,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[dict]:
+    """
+    Trigger MongoDB sync for a single account with default strategy:
+    - From last_synced_date + 1 day to (today - 3 days)
+    - If no last_synced_date, sync from 37 months ago
+    - Mode: Async for large ranges (>3 days), sync for small ranges
+
+    Args:
+        account_id: Account ID to sync (with or without act_ prefix)
+        user_id: Current user ID
+
+    Returns:
+        SuccessResponse with trigger result
+    """
+    from utils.db import get_all_ad_account_documents, InsightsSyncStateDocument
+
+    # Get the account
+    normalized_id = normalize_account_id(account_id)
+    accounts = await get_all_ad_account_documents(fetch_links=True)
+    account = next((acc for acc in accounts if normalize_account_id(acc.id) == normalized_id), None)
+
+    if not account:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=f"Account {account_id} not found"
+        )
+
+    today = datetime.utcnow().date()
+    # Target date: 3 days ago (to avoid realtime data instability)
+    until_date = today - timedelta(days=3)
+
+    # Use a placeholder since date, will be overridden by respect_last_synced logic
+    # But provide a reasonable fallback in case there's no last_synced_date
+    since_date = until_date - timedelta(days=1)
+
+    try:
+        # Get states
+        states = await InsightsSyncStateDocument.find_all().to_list()
+        state_map = {state.account_id: state for state in states}
+
+        # Call sync_range with respect_last_synced=True
+        result = await InsightsSyncService.sync_range(
+            since=since_date,
+            until=until_date,
+            mode="manual",
+            triggered_by=user_id,
+            accounts=[account],
+            state_map=state_map,
+            respect_last_synced=True,  # This will use last_synced_date + 1 if available
+        )
+
+        if normalized_id in result.failed_accounts:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to trigger MongoDB sync: {result.failed_accounts[normalized_id]}"
+            )
+
+        return SuccessResponse(
+            data={
+                "account_id": account_id,
+                "data_target": "mongodb",
+                "triggered": True,
+                "processed": len(result.processed_accounts) > 0
+            },
+            message=f"Successfully triggered MongoDB sync for {account_id}"
+        )
+
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to trigger MongoDB sync: {str(exc)}"
+        ) from exc
+
+
+@router.post("/sync/trigger-redis/{account_id}", response_model=SuccessResponse[dict])
+async def trigger_redis_sync(
+    account_id: str,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[dict]:
+    """
+    Trigger Redis cache sync for a single account with default strategy:
+    - From last_synced_date + 1 day to today (max 7 days lookback)
+    - Mode: Sync to Redis cache
+
+    Args:
+        account_id: Account ID to sync (with or without act_ prefix)
+        user_id: Current user ID
+
+    Returns:
+        SuccessResponse with trigger result
+    """
+    from api.services.realtime_cache_scheduler import sync_redis_for_account
+    from utils.db import get_all_ad_account_documents
+
+    # Get the account
+    normalized_id = normalize_account_id(account_id)
+    accounts = await get_all_ad_account_documents(fetch_links=True)
+    account = next((acc for acc in accounts if normalize_account_id(acc.id) == normalized_id), None)
+
+    if not account:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            detail=f"Account {account_id} not found"
+        )
+
+    try:
+        synced_records, error_msg = await sync_redis_for_account(
+            account,
+            trigger_type="manual",
+            triggered_by=user_id,
+        )
+
+        if error_msg:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to trigger Redis sync: {error_msg}"
+            )
+
+        if synced_records == 0:
+            return SuccessResponse(
+                data={
+                    "account_id": account_id,
+                    "data_target": "redis",
+                    "triggered": False,
+                    "reason": "already_up_to_date"
+                },
+                message=f"Redis cache for {account_id} is already up to date"
+            )
+
+        return SuccessResponse(
+            data={
+                "account_id": account_id,
+                "data_target": "redis",
+                "records_synced": synced_records,
+                "triggered": True
+            },
+            message=f"Successfully synced {synced_records} records to Redis for {account_id}"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to trigger Redis sync: {str(exc)}"
+        ) from exc
 
 
 # ===== DEPRECATED: Old sync endpoint for backward compatibility =====

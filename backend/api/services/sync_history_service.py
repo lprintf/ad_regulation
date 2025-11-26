@@ -83,6 +83,7 @@ class SyncHistoryService:
         status: str,
         records_count: int = 0,
         error_message: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Update sync history record status.
@@ -92,6 +93,7 @@ class SyncHistoryService:
             status: New status (running/success/failed)
             records_count: Number of records synced
             error_message: Error message if failed
+            metadata: Optional metadata to attach to the record
         """
         now = datetime.utcnow()
         update_fields: dict[str, Any] = {
@@ -110,6 +112,9 @@ class SyncHistoryService:
 
         if error_message:
             update_fields["error_message"] = error_message
+
+        if metadata:
+            update_fields["metadata"] = metadata
 
         await SyncHistoryDocument.find_one(
             SyncHistoryDocument.id == history_id
@@ -157,6 +162,7 @@ class SyncHistoryService:
         account_id: str | None = None,
         status: str | None = None,
         trigger_type: str | None = None,
+        data_target: str | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -167,6 +173,7 @@ class SyncHistoryService:
             account_id: Filter by account ID (optional)
             status: Filter by status (optional)
             trigger_type: Filter by trigger type (optional)
+            data_target: Filter by data target (mongodb/redis/hybrid) (optional)
             page: Page number (1-indexed)
             page_size: Records per page
 
@@ -181,6 +188,8 @@ class SyncHistoryService:
             query = query.find(SyncHistoryDocument.status == status)
         if trigger_type:
             query = query.find(SyncHistoryDocument.trigger_type == trigger_type)
+        if data_target:
+            query = query.find(SyncHistoryDocument.data_target == data_target)
 
         # Get total count
         total = await query.count()
@@ -206,8 +215,8 @@ class SyncHistoryService:
                 "mode": record.mode,
                 "data_target": record.data_target,
                 "status": record.status,
-                "started_at": record.started_at.isoformat(),
-                "completed_at": record.completed_at.isoformat()
+                "started_at": record.started_at.isoformat() + "Z",
+                "completed_at": record.completed_at.isoformat() + "Z"
                 if record.completed_at
                 else None,
                 "records_count": record.records_count,
@@ -234,48 +243,82 @@ class SyncHistoryService:
         states = await InsightsSyncStateDocument.find_all().to_list()
         state_map = {state.account_id: state for state in states}
 
-        # Get most recent history for each account
-        history_map: dict[str, SyncHistoryDocument] = {}
+        # Get most recent MongoDB and Redis history for each account
+        mongodb_history_map: dict[str, SyncHistoryDocument] = {}
+        redis_history_map: dict[str, SyncHistoryDocument] = {}
+
         for account in accounts:
-            recent = (
+            # Get most recent MongoDB sync history
+            mongodb_recent = (
                 await SyncHistoryDocument.find(
-                    SyncHistoryDocument.account_id == account.id
+                    SyncHistoryDocument.account_id == account.id,
+                    SyncHistoryDocument.data_target == "mongodb",
                 )
                 .sort(-SyncHistoryDocument.started_at)
                 .limit(1)
                 .to_list()
             )
-            if recent:
-                history_map[account.id] = recent[0]
+            if mongodb_recent:
+                mongodb_history_map[account.id] = mongodb_recent[0]
+
+            # Get most recent Redis sync history
+            redis_recent = (
+                await SyncHistoryDocument.find(
+                    SyncHistoryDocument.account_id == account.id,
+                    SyncHistoryDocument.data_target == "redis",
+                )
+                .sort(-SyncHistoryDocument.started_at)
+                .limit(1)
+                .to_list()
+            )
+            if redis_recent:
+                redis_history_map[account.id] = redis_recent[0]
 
         items: list[dict[str, Any]] = []
         for account in accounts:
             state = state_map.get(account.id)
-            history = history_map.get(account.id)
+            mongodb_history = mongodb_history_map.get(account.id)
+            redis_history = redis_history_map.get(account.id)
 
-            # Determine current status
-            current_status = "pending"
-            is_running = False
-            if history:
-                if history.status == "running":
-                    current_status = "running"
-                    is_running = True
-                elif state and state.last_status:
-                    current_status = state.last_status
+            # Determine MongoDB status
+            mongodb_status = "pending"
+            mongodb_is_running = False
+            mongodb_last_error = None
+            if mongodb_history:
+                if mongodb_history.status == "running":
+                    mongodb_status = "running"
+                    mongodb_is_running = True
+                elif mongodb_history.status in ("success", "failed"):
+                    mongodb_status = mongodb_history.status
+                    if mongodb_history.status == "failed":
+                        mongodb_last_error = mongodb_history.error_message
             elif state and state.last_status:
-                current_status = state.last_status
+                mongodb_status = state.last_status
+                mongodb_last_error = state.last_error
+
+            # Determine Redis status
+            redis_status = "pending"
+            redis_is_running = False
+            redis_last_error = None
+            if redis_history:
+                if redis_history.status == "running":
+                    redis_status = "running"
+                    redis_is_running = True
+                elif redis_history.status in ("success", "failed"):
+                    redis_status = redis_history.status
+                    if redis_history.status == "failed":
+                        redis_last_error = redis_history.error_message
 
             items.append(
                 {
                     "account_id": account.id,
                     "account_name": account.name,
-                    "status": current_status,
-                    "last_synced_at": state.last_synced_at.isoformat()
+                    # MongoDB 同步状态
+                    "mongodb_status": mongodb_status,
+                    "mongodb_is_running": mongodb_is_running,
+                    "mongodb_last_synced_at": state.last_synced_at.isoformat() + "Z"
                     if state and state.last_synced_at
-                    else None,
-                    "last_synced_date": state.last_synced_date.date().isoformat()
-                    if state and state.last_synced_date
-                    else None,
+                    else (mongodb_history.completed_at.isoformat() + "Z" if mongodb_history and mongodb_history.completed_at else None),
                     # MongoDB 数据覆盖范围
                     "mongodb_coverage_since": state.obs_since.date().isoformat()
                     if state and state.obs_since
@@ -283,26 +326,29 @@ class SyncHistoryService:
                     "mongodb_coverage_until": state.obs_until.date().isoformat()
                     if state and state.obs_until
                     else None,
-                    # Redis 缓存覆盖范围
+                    "mongodb_last_error": mongodb_last_error,
+                    "mongodb_last_history_id": str(mongodb_history.id) if mongodb_history else None,
+                    # Redis 同步状态
+                    "redis_status": redis_status,
+                    "redis_is_running": redis_is_running,
+                    "redis_last_synced_at": state.redis_cache_updated_at.isoformat() + "Z"
+                    if state and state.redis_cache_updated_at
+                    else (redis_history.completed_at.isoformat() + "Z" if redis_history and redis_history.completed_at else None),
                     "redis_cache_since": state.redis_cache_since.date().isoformat()
                     if state and state.redis_cache_since
                     else None,
                     "redis_cache_until": state.redis_cache_until.date().isoformat()
                     if state and state.redis_cache_until
                     else None,
-                    "redis_cache_updated_at": state.redis_cache_updated_at.isoformat()
-                    if state and state.redis_cache_updated_at
-                    else None,
-                    "last_error": state.last_error if state else None,
-                    "is_running": is_running,
-                    "last_history_id": str(history.id) if history else None,
+                    "redis_last_error": redis_last_error,
+                    "redis_last_history_id": str(redis_history.id) if redis_history else None,
                 }
             )
 
-        # Sort by last_synced_at descending, then by account name
+        # Sort by mongodb_last_synced_at descending, then by account name
         items.sort(
             key=lambda x: (
-                x["last_synced_at"] or "",
+                x["mongodb_last_synced_at"] or "",
                 x["account_name"] or x["account_id"],
             ),
             reverse=True,
@@ -340,8 +386,8 @@ class SyncHistoryService:
             "mode": record.mode,
             "data_target": record.data_target,
             "status": record.status,
-            "started_at": record.started_at.isoformat(),
-            "completed_at": record.completed_at.isoformat()
+            "started_at": record.started_at.isoformat() + "Z",
+            "completed_at": record.completed_at.isoformat() + "Z"
             if record.completed_at
             else None,
             "records_count": record.records_count,

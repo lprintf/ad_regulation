@@ -6,7 +6,7 @@ Executes at exact intervals (mm%N==0) for predictable scheduling.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import Any
 
 from apscheduler.jobstores.base import JobLookupError
@@ -16,7 +16,7 @@ from apscheduler.triggers.cron import CronTrigger
 from api.services.insights_sync_service import _fetch_insights_sync
 from api.services.sync_history_service import SyncHistoryService
 from config import REALTIME_CACHE_SYNC_INTERVAL_MINUTES
-from utils.db import get_all_ad_account_documents, InsightsSyncStateDocument
+from utils.db import get_all_ad_account_documents, InsightsSyncStateDocument, ADAccountDocument
 from utils.redis_client import cache_insights_for_date
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,180 @@ _scheduler: AsyncIOScheduler | None = None
 JOB_ID = "insights::realtime_cache_sync"
 SYNC_INTERVAL_MINUTES = REALTIME_CACHE_SYNC_INTERVAL_MINUTES
 _JOB_DISPLAY_NAME = "Realtime Cache Sync"
+
+
+async def sync_redis_for_account(
+    account: ADAccountDocument,
+    *,
+    trigger_type: str = "auto",
+    triggered_by: str | None = None,
+) -> tuple[int, str | None]:
+    """
+    Sync Redis cache for a single account using default strategy:
+    - From last_synced_date + 1 day to today (max 7 days lookback)
+
+    Args:
+        account: AD account document
+        trigger_type: Trigger type (auto/manual/retry)
+        triggered_by: User ID who triggered (for manual triggers)
+
+    Returns:
+        Tuple of (records_synced, error_message)
+    """
+    account_id = account.id if account.id.startswith("act_") else f"act_{account.id}"
+    today = datetime.utcnow().date()
+
+    # Query the last synced date from MongoDB
+    sync_state = await InsightsSyncStateDocument.find_one(
+        InsightsSyncStateDocument.account_id == account.id
+    )
+
+    # Determine the starting date for cache sync
+    if sync_state and sync_state.last_synced_date:
+        # Start from the day after last synced date
+        cache_start_date = sync_state.last_synced_date.date() + timedelta(days=1)
+    else:
+        # No sync state, default to last 3 days
+        cache_start_date = today - timedelta(days=3)
+
+    # Ensure we don't go too far back (max 7 days for safety)
+    earliest_allowed = today - timedelta(days=7)
+    if cache_start_date < earliest_allowed:
+        cache_start_date = earliest_allowed
+
+    # If cache_start_date is in the future, create history record and skip
+    if cache_start_date > today:
+        logger.debug(f"Account {account_id} Redis cache is up to date, skipping")
+
+        # Create history record showing the sync was triggered but skipped
+        history = await SyncHistoryService.create_history_record(
+            account_id=account.id,
+            account_name=account.name,
+            trigger_type=trigger_type,
+            triggered_by=triggered_by or "redis_cache_service",
+            since=cache_start_date,
+            until=today,
+            mode="sync",
+            data_target="redis",
+        )
+
+        # Mark as success with 0 records and explanation
+        await SyncHistoryService.update_history_status(
+            history_id=history.id,
+            status="success",
+            records_count=0,
+            metadata={"skip_reason": f"Already up to date (next sync date: {cache_start_date.isoformat()}, today: {today.isoformat()})", "skipped": True},
+        )
+
+        return 0, None
+
+    logger.info(
+        f"Syncing Redis cache for {account_id} from {cache_start_date.isoformat()} to {today.isoformat()}"
+    )
+
+    # Create sync history record
+    history = await SyncHistoryService.create_history_record(
+        account_id=account.id,
+        account_name=account.name,
+        trigger_type=trigger_type,
+        triggered_by=triggered_by or "redis_cache_service",
+        since=cache_start_date,
+        until=today,
+        mode="sync",
+        data_target="redis",
+    )
+
+    try:
+        # Track the actual range that was synced
+        first_synced_date = None
+        last_synced_date = None
+        synced_records = 0
+
+        # Sync each date in the range
+        current_date = cache_start_date
+        while current_date <= today:
+            try:
+                # Fetch insights for this specific date
+                insights_data = await _fetch_insights_sync(
+                    account_id=account_id,
+                    since=current_date,
+                    until=current_date,
+                )
+
+                # Cache in Redis
+                cached_count = await cache_insights_for_date(
+                    account_id=account_id,
+                    date_str=current_date.isoformat(),
+                    insights_data=insights_data,
+                )
+
+                synced_records += cached_count
+
+                # Track the actual range
+                if first_synced_date is None:
+                    first_synced_date = current_date
+                last_synced_date = current_date
+
+                logger.debug(
+                    f"Cached {cached_count} insights for {account_id} on {current_date.isoformat()}"
+                )
+
+            except Exception as exc:
+                logger.exception(
+                    f"Failed to sync Redis cache for {account_id} on {current_date.isoformat()}: {exc}"
+                )
+
+            current_date += timedelta(days=1)
+
+        # Update Redis cache status in InsightsSyncStateDocument
+        if first_synced_date and last_synced_date:
+            now = datetime.utcnow()
+            await InsightsSyncStateDocument.find_one(
+                InsightsSyncStateDocument.account_id == account.id
+            ).update(
+                {
+                    "$set": {
+                        "redis_cache_since": datetime.combine(first_synced_date, datetime.min.time()),
+                        "redis_cache_until": datetime.combine(last_synced_date, datetime.min.time()),
+                        "redis_cache_updated_at": now,
+                        "updated_at": now,
+                    }
+                },
+                upsert=True,
+            )
+
+            # Update history record with success status
+            await SyncHistoryService.update_history_status(
+                history_id=history.id,
+                status="success",
+                records_count=synced_records,
+            )
+            logger.info(
+                f"Updated Redis cache status for {account_id}: {first_synced_date} → {last_synced_date}, {synced_records} records"
+            )
+        else:
+            # If no data was synced, mark history as completed with 0 records
+            await SyncHistoryService.update_history_status(
+                history_id=history.id,
+                status="success",
+                records_count=0,
+            )
+
+        return synced_records, None
+
+    except Exception as exc:
+        error_msg = str(exc)
+        logger.exception(f"Failed to sync Redis cache for {account_id}: {exc}")
+
+        # Mark history as failed
+        await SyncHistoryService.update_history_status(
+            history_id=history.id,
+            status="failed",
+            records_count=synced_records if 'synced_records' in locals() else 0,
+            error_message=error_msg,
+        )
+
+        return 0, error_msg
 
 
 async def _sync_realtime_insights():
@@ -42,158 +216,26 @@ async def _sync_realtime_insights():
             logger.warning("No ad accounts found for realtime cache sync")
             return
 
-        today = datetime.utcnow().date()
-
         total_synced = 0
         total_failed = 0
-        total_date_ranges = 0
 
         for account in accounts:
-            account_id = account.id if account.id.startswith("act_") else f"act_{account.id}"
-
             try:
-                # Query the last synced date from MongoDB
-                sync_state = await InsightsSyncStateDocument.find_one(
-                    InsightsSyncStateDocument.account_id == account.id
-                )
-
-                # Determine the starting date for cache sync
-                if sync_state and sync_state.last_synced_date:
-                    # Start from the day after last synced date
-                    cache_start_date = sync_state.last_synced_date.date() + timedelta(days=1)
-                else:
-                    # No sync state, default to last 3 days
-                    cache_start_date = today - timedelta(days=3)
-
-                # Ensure we don't go too far back (max 7 days for safety)
-                earliest_allowed = today - timedelta(days=7)
-                if cache_start_date < earliest_allowed:
-                    cache_start_date = earliest_allowed
-
-                # If cache_start_date is in the future, skip
-                if cache_start_date > today:
-                    logger.debug(f"Account {account_id} is up to date, skipping cache sync")
-                    continue
-
-                logger.info(
-                    f"Syncing cache for {account_id} from {cache_start_date.isoformat()} to {today.isoformat()}"
-                )
-
-                # Create sync history record
-                history = await SyncHistoryService.create_history_record(
-                    account_id=account.id,
-                    account_name=account.name,
+                synced_records, error_msg = await sync_redis_for_account(
+                    account,
                     trigger_type="auto",
                     triggered_by="realtime_cache_scheduler",
-                    since=cache_start_date,
-                    until=today,
-                    mode="sync",
-                    data_target="redis",
                 )
 
-                # Track the actual range that was synced
-                first_synced_date = None
-                last_synced_date = None
-                synced_records = 0
-
-                # Sync each date in the range
-                current_date = cache_start_date
-                while current_date <= today:
-                    try:
-                        # Fetch insights for this specific date
-                        insights_data = await _fetch_insights_sync(
-                            account_id=account_id,
-                            since=current_date,
-                            until=current_date,
-                        )
-
-                        # Cache in Redis
-                        cached_count = await cache_insights_for_date(
-                            account_id=account_id,
-                            date_str=current_date.isoformat(),
-                            insights_data=insights_data,
-                        )
-
-                        total_synced += cached_count
-                        total_date_ranges += 1
-                        synced_records += cached_count
-
-                        # Track the actual range
-                        if first_synced_date is None:
-                            first_synced_date = current_date
-                        last_synced_date = current_date
-
-                        logger.debug(
-                            f"Cached {cached_count} insights for {account_id} on {current_date.isoformat()}"
-                        )
-
-                    except Exception as exc:
-                        total_failed += 1
-                        logger.exception(
-                            f"Failed to sync cache for {account_id} on {current_date.isoformat()}: {exc}"
-                        )
-
-                    current_date += timedelta(days=1)
-
-                # Update Redis cache status in InsightsSyncStateDocument
-                if first_synced_date and last_synced_date:
-                    try:
-                        now = datetime.utcnow()
-                        await InsightsSyncStateDocument.find_one(
-                            InsightsSyncStateDocument.account_id == account.id
-                        ).update(
-                            {
-                                "$set": {
-                                    "redis_cache_since": datetime.combine(first_synced_date, datetime.min.time()),
-                                    "redis_cache_until": datetime.combine(last_synced_date, datetime.min.time()),
-                                    "redis_cache_updated_at": now,
-                                    "updated_at": now,
-                                }
-                            },
-                            upsert=True,
-                        )
-                        logger.info(
-                            f"Updated Redis cache status for {account_id}: {first_synced_date} → {last_synced_date}"
-                        )
-
-                        # Update history record with success status
-                        await SyncHistoryService.update_history_status(
-                            history_id=history.id,
-                            status="success",
-                            records_count=synced_records,
-                        )
-                        logger.info(
-                            f"Updated sync history {history.id} for {account_id}: {synced_records} records synced"
-                        )
-                    except Exception as exc:
-                        logger.error(f"Failed to update Redis cache status for {account_id}: {exc}")
+                if error_msg:
+                    total_failed += 1
+                    logger.error(f"Failed to sync Redis for {account.id}: {error_msg}")
                 else:
-                    # If no data was synced, mark history as completed with 0 records
-                    try:
-                        await SyncHistoryService.update_history_status(
-                            history_id=history.id,
-                            status="success",
-                            records_count=0,
-                        )
-                    except Exception as exc:
-                        logger.error(f"Failed to update sync history for {account_id}: {exc}")
-
+                    total_synced += synced_records
 
             except Exception as exc:
-                logger.exception(f"Failed to process account {account_id} for cache sync: {exc}")
+                logger.exception(f"Failed to process account {account.id} for cache sync: {exc}")
                 total_failed += 1
-
-                # Mark history record as failed if one was created
-                try:
-                    if 'history' in locals():
-                        await SyncHistoryService.update_history_status(
-                            history_id=history.id,
-                            status="failed",
-                            records_count=synced_records if 'synced_records' in locals() else 0,
-                            error_message=str(exc),
-                        )
-                except Exception as history_exc:
-                    logger.error(f"Failed to update history record for {account_id}: {history_exc}")
 
         finished_at = datetime.utcnow()
         duration_seconds = (finished_at - started_at).total_seconds()
@@ -201,7 +243,7 @@ async def _sync_realtime_insights():
         logger.info(
             f"Realtime insights cache sync completed: "
             f"synced={total_synced} records, failed={total_failed}, "
-            f"date_ranges={total_date_ranges}, accounts={len(accounts)}, "
+            f"accounts={len(accounts)}, "
             f"duration={duration_seconds:.2f}s"
         )
 

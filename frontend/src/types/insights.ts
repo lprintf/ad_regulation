@@ -25,6 +25,7 @@ export interface SyncHistoryRecord {
   percentComplete: number
   totalDays: number
   processedDays: number
+  metadata?: Record<string, any> | null
 }
 
 export interface SyncHistoryListResponse {
@@ -37,19 +38,26 @@ export interface SyncHistoryListResponse {
 export interface SyncOverviewItem {
   accountId: string
   accountName?: string | null
-  status: InsightSyncStatus
-  lastSyncedAt?: string | null
-  lastSyncedDate?: string | null
+
+  // MongoDB 同步状态
+  mongodbStatus: InsightSyncStatus
+  mongodbIsRunning: boolean
+  mongodbLastSyncedAt?: string | null
   // MongoDB 数据覆盖范围
   mongodbCoverageSince?: string | null
   mongodbCoverageUntil?: string | null
+  mongodbLastError?: string | null
+  mongodbLastHistoryId?: string | null
+
+  // Redis 同步状态
+  redisStatus: InsightSyncStatus
+  redisIsRunning: boolean
+  redisLastSyncedAt?: string | null
   // Redis 缓存覆盖范围
   redisCacheSince?: string | null
   redisCacheUntil?: string | null
-  redisCacheUpdatedAt?: string | null
-  lastError?: string | null
-  isRunning: boolean
-  lastHistoryId?: string | null
+  redisLastError?: string | null
+  redisLastHistoryId?: string | null
 }
 
 export interface SyncOverviewResponse {

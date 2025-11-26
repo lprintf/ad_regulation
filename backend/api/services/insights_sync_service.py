@@ -273,6 +273,7 @@ class InsightsSyncService:
         base_start = _subtract_months(today_date, HISTORICAL_MONTH_LOOKBACK)
         sync_ranges: list[tuple[ADAccountDocument, date, date]] = []
         async_ranges: list[tuple[ADAccountDocument, date, date]] = []
+        skipped_accounts: list[tuple[ADAccountDocument, str]] = []  # Track skipped accounts with reason
 
         for account in accounts:
             account_start = max(since, base_start)
@@ -282,10 +283,13 @@ class InsightsSyncService:
                 account_start = max(account_start, last_date + timedelta(days=1))
 
             if account_start > until:
+                # Account is already up to date
+                skipped_accounts.append((account, f"Already up to date (last sync: {account_start.isoformat()}, target: {until.isoformat()})"))
                 continue
 
             days = (until - account_start).days + 1
             if days <= 0:
+                skipped_accounts.append((account, f"No new data to sync (calculated days: {days})"))
                 continue
 
             range_payload = {
@@ -347,16 +351,50 @@ class InsightsSyncService:
                 upsert=True,
             )
 
+        # Initialize result dictionaries
+        processed_accounts: dict[str, dict[str, Any]] = {}
+        failed_accounts: dict[str, str] = {}
+
+        # Handle skipped accounts - create history records for "already up to date" cases
+        if skipped_accounts:
+            from api.services.sync_history_service import SyncHistoryService
+
+            for account, reason in skipped_accounts:
+                try:
+                    # Create history record showing the sync was triggered but skipped
+                    history = await SyncHistoryService.create_history_record(
+                        account_id=account.id,
+                        account_name=account.name,
+                        trigger_type=mode if mode in ("manual", "auto", "retry") else "manual",
+                        triggered_by=triggered_by or "insights_sync_service",
+                        since=since,
+                        until=until,
+                        mode="sync",
+                        data_target="mongodb",
+                    )
+
+                    # Mark as success with 0 records and explanation in metadata
+                    await SyncHistoryService.update_history_status(
+                        history_id=history.id,
+                        status="success",
+                        records_count=0,
+                        metadata={"skip_reason": reason, "skipped": True},
+                    )
+
+                    logger.info(f"Created history record for skipped account {account.id}: {reason}")
+                except Exception as exc:
+                    logger.exception(f"Failed to create history for skipped account {account.id}: {exc}")
+
         if not sync_ranges and not async_ranges:
             logger.info(
-                "No accounts require synchronization for window %s-%s",
+                "No accounts require synchronization for window %s-%s (all up to date)",
                 since,
                 until,
             )
             return SyncResult(
                 total_accounts=len(accounts),
-                processed_accounts={},
-                failed_accounts={},
+                processed_accounts=processed_accounts,
+                failed_accounts=failed_accounts,
             )
 
         total_days = (until - since).days + 1
@@ -366,9 +404,6 @@ class InsightsSyncService:
             logger.info("Dropped insights indexes to speed up backfill: %s", dropped)
 
         try:
-            processed_accounts: dict[str, dict[str, Any]] = {}
-            failed_accounts: dict[str, str] = {}
-
             if sync_ranges:
                 sync_processed, sync_failures = await InsightsSyncService._process_sync_accounts(
                     accounts=sync_ranges,
@@ -495,6 +530,8 @@ class InsightsSyncService:
         trigger: str,
         triggered_by: str | None,
     ) -> Tuple[dict[str, dict[str, Any]], dict[str, str]]:
+        from api.services.sync_history_service import SyncHistoryService
+
         processed: dict[str, dict[str, Any]] = {}
         failures: dict[str, str] = {}
         for account, range_start, range_end in accounts:
@@ -507,6 +544,19 @@ class InsightsSyncService:
             range_payload["trigger"] = trigger
             if triggered_by:
                 range_payload["triggered_by"] = triggered_by
+
+            # Create sync history record
+            history = await SyncHistoryService.create_history_record(
+                account_id=account.id,
+                account_name=account.name,
+                trigger_type=trigger if trigger in ("manual", "auto", "retry") else "manual",
+                triggered_by=triggered_by or "insights_sync_service",
+                since=range_start,
+                until=range_end,
+                mode="sync",
+                data_target="mongodb",
+            )
+
             try:
                 records = await _fetch_insights_sync(account_id, range_start, range_end)
                 await _bulk_upsert_insights(
@@ -530,6 +580,14 @@ class InsightsSyncService:
                     },
                     upsert=True,
                 )
+
+                # Update sync history record with success status
+                await SyncHistoryService.update_history_status(
+                    history_id=history.id,
+                    status="success",
+                    records_count=len(records),
+                )
+
                 processed[account_id] = {
                     "mode": "sync",
                     "since": range_start.isoformat(),
@@ -562,6 +620,15 @@ class InsightsSyncService:
                     },
                     upsert=True,
                 )
+
+                # Update sync history record with failed status
+                await SyncHistoryService.update_history_status(
+                    history_id=history.id,
+                    status="failed",
+                    records_count=0,
+                    error_message=message,
+                )
+
         return processed, failures
 
     @staticmethod
@@ -571,12 +638,31 @@ class InsightsSyncService:
         trigger: str,
         triggered_by: str | None,
     ) -> Tuple[dict[str, dict[str, Any]], dict[str, str]]:
+        from api.services.sync_history_service import SyncHistoryService
+
         processed: dict[str, dict[str, Any]] = {}
         failures: dict[str, str] = {}
         range_lookup = {
             normalize_account_id(account.id): (range_start, range_end)
             for account, range_start, range_end in accounts
         }
+
+        # Create sync history records for all accounts before launching jobs
+        history_map: dict[str, Any] = {}
+        for account, range_start, range_end in accounts:
+            account_id = normalize_account_id(account.id)
+            history = await SyncHistoryService.create_history_record(
+                account_id=account.id,
+                account_name=account.name,
+                trigger_type=trigger if trigger in ("manual", "auto", "retry") else "manual",
+                triggered_by=triggered_by or "insights_sync_service",
+                since=range_start,
+                until=range_end,
+                mode="async",
+                data_target="mongodb",
+            )
+            history_map[account_id] = history
+
         jobs, launch_failures = await _launch_async_jobs(accounts)
         for account_id, message in launch_failures.items():
             failures[account_id] = message
@@ -602,6 +688,16 @@ class InsightsSyncService:
                 },
                 upsert=True,
             )
+
+            # Update sync history record with failed status (job launch failure)
+            history = history_map.get(account_id)
+            if history:
+                await SyncHistoryService.update_history_status(
+                    history_id=history.id,
+                    status="failed",
+                    records_count=0,
+                    error_message=f"Failed to launch async job: {message}",
+                )
         completed_jobs, failed_jobs = await _await_async_jobs(jobs)
         for wrapper in completed_jobs:
             range_payload = {"since": wrapper.since.isoformat(), "until": wrapper.until.isoformat(), "mode": "async", "trigger": trigger}
@@ -626,6 +722,16 @@ class InsightsSyncService:
                     },
                     upsert=True,
                 )
+
+                # Update sync history record with success status
+                history = history_map.get(wrapper.account_id)
+                if history:
+                    await SyncHistoryService.update_history_status(
+                        history_id=history.id,
+                        status="success",
+                        records_count=len(records),
+                    )
+
                 processed[wrapper.account_id] = {
                     "mode": "async",
                     "since": wrapper.since.isoformat(),
@@ -652,6 +758,17 @@ class InsightsSyncService:
                     },
                     upsert=True,
                 )
+
+                # Update sync history record with failed status (data collection/storage failure)
+                history = history_map.get(wrapper.account_id)
+                if history:
+                    await SyncHistoryService.update_history_status(
+                        history_id=history.id,
+                        status="failed",
+                        records_count=0,
+                        error_message=message,
+                    )
+
         for wrapper, reason in failed_jobs:
             range_payload = {"since": wrapper.since.isoformat(), "until": wrapper.until.isoformat(), "mode": "async", "trigger": trigger}
             if triggered_by:
@@ -673,6 +790,16 @@ class InsightsSyncService:
                 },
                 upsert=True,
             )
+
+            # Update sync history record with failed status (async job failure)
+            history = history_map.get(wrapper.account_id)
+            if history:
+                await SyncHistoryService.update_history_status(
+                    history_id=history.id,
+                    status="failed",
+                    records_count=0,
+                    error_message=message,
+                )
         return processed, failures
 
 async def _launch_async_jobs(

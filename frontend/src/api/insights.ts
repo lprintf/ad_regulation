@@ -17,19 +17,26 @@ const mapSyncOverviewItemFromApi = (item: any): SyncOverviewItem => {
   return {
     accountId: item?.account_id ?? item?.accountId ?? '',
     accountName: item?.account_name ?? item?.accountName ?? null,
-    status: (item?.status ?? 'pending') as InsightSyncStatus,
-    lastSyncedAt: item?.last_synced_at ?? item?.lastSyncedAt ?? null,
-    lastSyncedDate: item?.last_synced_date ?? item?.lastSyncedDate ?? null,
+
+    // MongoDB 同步状态
+    mongodbStatus: (item?.mongodb_status ?? item?.mongodbStatus ?? 'pending') as InsightSyncStatus,
+    mongodbIsRunning: Boolean(item?.mongodb_is_running ?? item?.mongodbIsRunning ?? false),
+    mongodbLastSyncedAt: item?.mongodb_last_synced_at ?? item?.mongodbLastSyncedAt ?? null,
     // MongoDB 数据覆盖范围
     mongodbCoverageSince: item?.mongodb_coverage_since ?? item?.mongodbCoverageSince ?? null,
     mongodbCoverageUntil: item?.mongodb_coverage_until ?? item?.mongodbCoverageUntil ?? null,
+    mongodbLastError: item?.mongodb_last_error ?? item?.mongodbLastError ?? null,
+    mongodbLastHistoryId: item?.mongodb_last_history_id ?? item?.mongodbLastHistoryId ?? null,
+
+    // Redis 同步状态
+    redisStatus: (item?.redis_status ?? item?.redisStatus ?? 'pending') as InsightSyncStatus,
+    redisIsRunning: Boolean(item?.redis_is_running ?? item?.redisIsRunning ?? false),
+    redisLastSyncedAt: item?.redis_last_synced_at ?? item?.redisLastSyncedAt ?? null,
     // Redis 缓存覆盖范围
     redisCacheSince: item?.redis_cache_since ?? item?.redisCacheSince ?? null,
     redisCacheUntil: item?.redis_cache_until ?? item?.redisCacheUntil ?? null,
-    redisCacheUpdatedAt: item?.redis_cache_updated_at ?? item?.redisCacheUpdatedAt ?? null,
-    lastError: item?.last_error ?? item?.lastError ?? null,
-    isRunning: Boolean(item?.is_running ?? item?.isRunning ?? false),
-    lastHistoryId: item?.last_history_id ?? item?.lastHistoryId ?? null
+    redisLastError: item?.redis_last_error ?? item?.redisLastError ?? null,
+    redisLastHistoryId: item?.redis_last_history_id ?? item?.redisLastHistoryId ?? null,
   }
 }
 
@@ -52,7 +59,8 @@ const mapSyncHistoryRecordFromApi = (item: any): SyncHistoryRecord => {
     durationSeconds: item?.duration_seconds ?? item?.durationSeconds ?? null,
     percentComplete: Number(item?.percent_complete ?? item?.percentComplete ?? 0),
     totalDays: Number(item?.total_days ?? item?.totalDays ?? 0),
-    processedDays: Number(item?.processed_days ?? item?.processedDays ?? 0)
+    processedDays: Number(item?.processed_days ?? item?.processedDays ?? 0),
+    metadata: item?.metadata ?? null
   }
 }
 
@@ -70,6 +78,7 @@ export interface SyncHistoryQueryParams {
   accountId?: string
   status?: InsightSyncStatus
   triggerType?: 'manual' | 'auto' | 'retry'
+  dataTarget?: 'mongodb' | 'redis' | 'hybrid'
   page?: number
   pageSize?: number
 }
@@ -79,6 +88,7 @@ export const fetchSyncHistory = async (params: SyncHistoryQueryParams = {}): Pro
   if (params.accountId) queryParams.account_id = params.accountId
   if (params.status) queryParams.status = params.status
   if (params.triggerType) queryParams.trigger_type = params.triggerType
+  if (params.dataTarget) queryParams.data_target = params.dataTarget
   if (params.page) queryParams.page = params.page
   if (params.pageSize) queryParams.page_size = params.pageSize
 
@@ -143,6 +153,18 @@ export const triggerSync = async (payload: {
     processedAccounts: Object.fromEntries(processedEntries),
     failedAccounts: failedSource as Record<string, string>
   }
+}
+
+export const triggerAccountSync = async (accountId: string): Promise<void> => {
+  await apiClient.post(`/insights/sync/trigger-account/${accountId}`)
+}
+
+export const triggerMongodbSync = async (accountId: string): Promise<void> => {
+  await apiClient.post(`/insights/sync/trigger-mongodb/${accountId}`)
+}
+
+export const triggerRedisSync = async (accountId: string): Promise<void> => {
+  await apiClient.post(`/insights/sync/trigger-redis/${accountId}`)
 }
 
 // ===== Legacy/Deprecated Sync API =====

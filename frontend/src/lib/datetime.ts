@@ -19,8 +19,9 @@ export const formatRelativeTime = (isoString?: string) => {
   try {
     const formatter = new Intl.RelativeTimeFormat('zh-CN', { numeric: 'auto' })
     const date = new Date(isoString)
-    const now = new Date()
-    const diffMs = date.getTime() - now.getTime()
+    // Use Date.now() to explicitly get current UTC timestamp in milliseconds
+    const nowUtc = Date.now()
+    const diffMs = date.getTime() - nowUtc
     const diffMinutes = Math.round(diffMs / (1000 * 60))
 
     if (Math.abs(diffMinutes) < 60) {

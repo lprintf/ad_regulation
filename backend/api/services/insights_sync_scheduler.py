@@ -315,9 +315,19 @@ def resume_insights_scheduler_task() -> None:
 
 
 async def run_insights_scheduler_task_now() -> None:
+    """
+    Manually trigger the insights sync task immediately.
+    Runs in the background to avoid blocking the HTTP response.
+    """
     if _scheduler is None:
         raise ValueError("Insights scheduler is not running")
     job = _scheduler.get_job(JOB_ID)
     if job is None:
         raise ValueError("Insights scheduler task not found")
-    await job.func(*job.args, **job.kwargs)
+
+    # Import asyncio for background execution
+    import asyncio
+
+    # Run in background to avoid blocking HTTP response
+    asyncio.create_task(job.func(*job.args, **job.kwargs))
+    logger.info("Insights sync task triggered manually (running in background)")
