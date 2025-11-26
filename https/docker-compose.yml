@@ -35,9 +35,9 @@ services:
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-}
-      # 分布式任务队列配置
-      ENABLE_SCHEDULER: "true"   # 生产环境启用调度器（入队任务）
-      ENABLE_WORKER: "true"       # 生产环境启用 worker（消费任务）
+      # 分布式任务队列配置（基于 Redis Leader Election）
+      ENABLE_SCHEDULER: "true"   # 所有实例启用调度器，自动选举 Leader
+      ENABLE_WORKER: "true"       # 所有实例启用 worker（消费任务）
       WORKER_CONCURRENCY: "10"    # Worker 并发数
     env_file:
       - .env

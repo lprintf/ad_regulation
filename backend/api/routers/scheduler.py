@@ -219,3 +219,30 @@ async def run_scheduler_task(
     except ValueError as exc:
         _handle_value_error(exc)
 
+
+# ===== Leader Election Monitoring =====
+
+
+@router.get(
+    "/leader",
+    response_model=SuccessResponse[dict],
+)
+async def get_scheduler_leader():
+    """
+    获取调度器 Leader 信息
+
+    返回当前调度器 Leader 的实例信息，包括：
+    - current_leader: 当前 Leader 实例 ID
+    - is_self_leader: 当前实例是否是 Leader
+    - self_instance_id: 当前实例 ID
+    - lock_ttl_seconds: 锁剩余过期时间
+    """
+    from api.services.scheduler_leader_election import get_leader_info
+
+    leader_info = await get_leader_info()
+
+    return SuccessResponse(
+        data=leader_info,
+        message="Scheduler leader information retrieved",
+    )
+

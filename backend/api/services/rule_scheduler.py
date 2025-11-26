@@ -174,6 +174,14 @@ _job_handlers: dict[str, SchedulerJobHandler] = {}
 
 
 async def _scheduled_rule_execution(config: dict[str, Any] | None = None) -> None:
+    """规则引擎定期执行（只有 Leader 才执行）"""
+    from api.services.scheduler_leader_election import is_scheduler_leader
+
+    # ⚠️ Leader 检查
+    if not is_scheduler_leader():
+        logger.debug("Skipping rule execution: not scheduler leader")
+        return
+
     scheduled_time = datetime.utcnow()
     limit: int | None = None
     if config:
@@ -194,6 +202,14 @@ async def _scheduled_rule_execution(config: dict[str, Any] | None = None) -> Non
 
 
 async def _scheduled_auto_unbind(config: dict[str, Any] | None = None) -> None:
+    """自动解绑不活跃规则（只有 Leader 才执行）"""
+    from api.services.scheduler_leader_election import is_scheduler_leader
+
+    # ⚠️ Leader 检查
+    if not is_scheduler_leader():
+        logger.debug("Skipping auto unbind: not scheduler leader")
+        return
+
     inactive_days = 7
     if config and "inactive_days" in config:
         raw_value = config["inactive_days"]
@@ -218,6 +234,14 @@ async def _scheduled_auto_unbind(config: dict[str, Any] | None = None) -> None:
 
 
 async def _scheduled_scan_new_ads(config: dict[str, Any] | None = None) -> None:
+    """扫描新广告（只有 Leader 才执行）"""
+    from api.services.scheduler_leader_election import is_scheduler_leader
+
+    # ⚠️ Leader 检查
+    if not is_scheduler_leader():
+        logger.debug("Skipping new ads scan: not scheduler leader")
+        return
+
     ad_accounts: list[str] | None = None
     if config:
         raw_accounts = config.get("ad_accounts") or config.get("accounts")

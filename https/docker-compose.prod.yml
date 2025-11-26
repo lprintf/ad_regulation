@@ -1,0 +1,76 @@
+# 生产环境多实例部署配置
+# 使用方式: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+services:
+  # API 服务：可横向扩展
+  backend:
+    environment:
+      - ENABLE_SCHEDULER=false  # API 实例不运行调度器
+      - ENABLE_WORKER=true      # 启用 worker 消费任务
+      - WORKER_CONCURRENCY=10   # 每个实例 10 个并发 worker
+      - REDIS_MAX_CONNECTIONS=100
+      - MONGO_MAX_POOL_SIZE=100
+    deploy:
+      replicas: 3  # 3 个 API 实例
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # 调度器服务：单实例
+  scheduler:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    command: granian api.app:app --interface asgi --host 0.0.0.0 --port 8000 --workers 1 --loop uvloop
+    environment:
+      - ENABLE_SCHEDULER=true   # 只有调度器实例启用
+      - ENABLE_WORKER=false     # 调度器不消费任务（可选改为 true）
+      - MONGODB_URL=${MONGODB_URL}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
+    env_file:
+      - .env
+    depends_on:
+      - mongodb
+      - redis
+    deploy:
+      replicas: 1  # ⚠️ 必须只有 1 个
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+      restart_policy:
+        condition: any  # 崩溃立即重启
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - default
+    labels:
+      - "com.docker.compose.service=scheduler"

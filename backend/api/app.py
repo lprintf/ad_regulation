@@ -60,15 +60,23 @@ async def lifespan(app: FastAPI):
     print("✓ Redis initialized")
 
     # 启动调度器（只负责入队任务）
+    # 使用 Leader Election 确保只有一个实例执行调度任务
     if enable_scheduler:
+        from api.services.scheduler_leader_election import start_leader_election
+
+        # 启动 Leader 选举（所有实例都参与）
+        await start_leader_election()
+        print("✓ Leader election started")
+
+        # 启动调度器（所有实例都启动，但只有 Leader 执行）
         await RuleEngineService.ensure_demo_rule_seed()
         print("✓ Demo rule seeded (if missing)")
         await start_rule_scheduler()
-        print("✓ Rule scheduler started (enqueuing tasks)")
+        print("✓ Rule scheduler started (with leader election)")
         await start_insights_sync_scheduler()
-        print("✓ Insights sync scheduler started (enqueuing tasks)")
+        print("✓ Insights sync scheduler started (with leader election)")
         await start_realtime_cache_scheduler()
-        print("✓ Realtime cache scheduler started (enqueuing tasks)")
+        print("✓ Realtime cache scheduler started (with leader election)")
     else:
         print("⊗ Scheduler disabled (ENABLE_SCHEDULER not set)")
 
@@ -84,12 +92,18 @@ async def lifespan(app: FastAPI):
 
     # Shutdown: Stop services
     if enable_scheduler:
+        from api.services.scheduler_leader_election import stop_leader_election
+
         await stop_rule_scheduler()
         print("✓ Rule scheduler stopped")
         await stop_insights_sync_scheduler()
         print("✓ Insights sync scheduler stopped")
         await stop_realtime_cache_scheduler()
         print("✓ Realtime cache scheduler stopped")
+
+        # 停止 Leader 选举
+        await stop_leader_election()
+        print("✓ Leader election stopped")
 
     if enable_worker:
         from api.services.atomic_task_queue import stop_sync_queue_workers

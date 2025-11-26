@@ -205,11 +205,19 @@ async def _sync_realtime_insights():
     """
     调度器：批量将所有账号的同步任务入队
     任务会被分发到多个 worker 并发执行（利用 Redis BRPOP 原子性）
+
+    ⚠️ 只有 Leader 实例才执行入队操作（基于 Redis Leader Election）
     """
     try:
+        from api.services.scheduler_leader_election import is_scheduler_leader
         from api.services.atomic_task_queue import get_sync_queue
 
-        logger.info("Enqueuing realtime insights cache sync tasks for all accounts")
+        # ⚠️ Leader 检查：只有 Leader 才执行调度任务
+        if not is_scheduler_leader():
+            logger.debug("Skipping realtime sync: not scheduler leader")
+            return
+
+        logger.info("Enqueuing realtime insights cache sync tasks (as leader)")
         scheduled_time = datetime.utcnow()
 
         # Get all ad accounts
