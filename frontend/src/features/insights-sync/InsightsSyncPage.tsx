@@ -1,11 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { useState } from 'react'
 import { fetchSyncOverview, fetchSyncHistory, triggerMongodbSync, triggerRedisSync } from '../../api/insights'
 import { formatRelativeTime } from '../../lib/datetime'
 import type {
   InsightSyncStatus,
   SyncOverviewItem,
-  SyncHistoryRecord
+  SyncHistoryRecord,
+  SyncHistoryListResponse
 } from '../../types/insights'
 
 const statusClassMap: Record<InsightSyncStatus, string> = {
@@ -295,7 +296,7 @@ const AccountCard = ({ item }: AccountCardProps) => {
 
 interface HistoryModalProps {
   title: string
-  historyQuery: ReturnType<typeof useQuery>
+  historyQuery: UseQueryResult<SyncHistoryListResponse, Error>
   onClose: () => void
 }
 
@@ -329,11 +330,14 @@ const HistoryModal = ({ title, historyQuery, onClose }: HistoryModalProps) => {
             <div>加载中…</div>
           ) : historyQuery.isError ? (
             <div style={{ color: 'var(--color-danger)' }}>加载失败</div>
-          ) : !historyQuery.data || historyQuery.data.items.length === 0 ? (
-            <div>暂无历史记录</div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {historyQuery.data.items.map((record: SyncHistoryRecord) => (
+            (() => {
+              const items = historyQuery.data?.items ?? []
+              return items.length === 0 ? (
+                <div>暂无历史记录</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {items.map((record: SyncHistoryRecord) => (
                 <div
                   key={record.id}
                   style={{
@@ -394,6 +398,8 @@ const HistoryModal = ({ title, historyQuery, onClose }: HistoryModalProps) => {
                 </div>
               ))}
             </div>
+              )
+            })()
           )}
         </div>
         <div className="card__footer" style={{ display: 'flex', justifyContent: 'flex-end' }}>
