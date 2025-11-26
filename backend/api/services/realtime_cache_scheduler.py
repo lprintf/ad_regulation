@@ -203,12 +203,14 @@ async def sync_redis_for_account(
 
 async def _sync_realtime_insights():
     """
-    Sync from last synced date to today into Redis for all accounts.
-    Called at regular intervals (every 10/20/30 minutes) by the scheduler.
+    调度器：批量将所有账号的同步任务入队
+    任务会被分发到多个 worker 并发执行（利用 Redis BRPOP 原子性）
     """
     try:
-        logger.info("Starting realtime insights cache sync (from_last strategy)")
-        started_at = datetime.utcnow()
+        from api.services.atomic_task_queue import get_sync_queue
+
+        logger.info("Enqueuing realtime insights cache sync tasks for all accounts")
+        scheduled_time = datetime.utcnow()
 
         # Get all ad accounts
         accounts = await get_all_ad_account_documents(fetch_links=True)
@@ -216,39 +218,23 @@ async def _sync_realtime_insights():
             logger.warning("No ad accounts found for realtime cache sync")
             return
 
-        total_synced = 0
-        total_failed = 0
+        # 构建任务列表
+        tasks = [
+            ("sync_account_redis", {"account_id": account.id})
+            for account in accounts
+        ]
 
-        for account in accounts:
-            try:
-                synced_records, error_msg = await sync_redis_for_account(
-                    account,
-                    trigger_type="auto",
-                    triggered_by="realtime_cache_scheduler",
-                )
-
-                if error_msg:
-                    total_failed += 1
-                    logger.error(f"Failed to sync Redis for {account.id}: {error_msg}")
-                else:
-                    total_synced += synced_records
-
-            except Exception as exc:
-                logger.exception(f"Failed to process account {account.id} for cache sync: {exc}")
-                total_failed += 1
-
-        finished_at = datetime.utcnow()
-        duration_seconds = (finished_at - started_at).total_seconds()
+        # 批量入队（原子操作）
+        queue = await get_sync_queue()
+        count = await queue.enqueue_batch(tasks, scheduled_time=scheduled_time)
 
         logger.info(
-            f"Realtime insights cache sync completed: "
-            f"synced={total_synced} records, failed={total_failed}, "
-            f"accounts={len(accounts)}, "
-            f"duration={duration_seconds:.2f}s"
+            f"Enqueued {count} Redis sync tasks for {len(accounts)} accounts "
+            f"(scheduled at {scheduled_time.isoformat()})"
         )
 
     except Exception as exc:
-        logger.exception(f"Realtime insights cache sync failed: {exc}")
+        logger.exception(f"Failed to enqueue realtime insights cache sync tasks: {exc}")
         raise
 
 

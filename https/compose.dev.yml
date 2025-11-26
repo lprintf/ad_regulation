@@ -10,6 +10,12 @@ services:
   # 开发环境的后端服务 - 覆盖模式，使用 Granian 热重载
   backend:
     command: granian api.app:app --interface asgi --host 0.0.0.0 --port 8000 --reload --loop uvloop
+    environment:
+      # 开发环境：禁用调度器，启用 worker
+      # 这样可以避免与生产环境的调度器冲突，但保留手动触发任务的能力
+      ENABLE_SCHEDULER: "false"  # 不自动调度任务
+      ENABLE_WORKER: "true"      # 启用 worker 消费任务
+      WORKER_CONCURRENCY: "5"    # 开发环境降低并发数
     volumes:
       # 挂载代码目录实现热重载
       - ../backend/api:/app/api:ro

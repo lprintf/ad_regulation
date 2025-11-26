@@ -42,30 +42,60 @@ async def lifespan(app: FastAPI):
     """
     Application lifespan manager.
     Handles startup and shutdown events.
+    Supports environment variables:
+    - ENABLE_SCHEDULER: true/false (default: false) - 是否启用调度器（入队任务）
+    - ENABLE_WORKER: true/false (default: false) - 是否启用 worker（消费任务）
     """
+    import os
+
+    # 读取环境变量
+    enable_scheduler = os.getenv("ENABLE_SCHEDULER", "false").lower() == "true"
+    enable_worker = os.getenv("ENABLE_WORKER", "false").lower() == "true"
+    worker_concurrency = int(os.getenv("WORKER_CONCURRENCY", "10"))
+
     # Startup: Initialize database connection
     await init_db()
     print("✓ Database initialized")
     await init_redis()
     print("✓ Redis initialized")
-    await RuleEngineService.ensure_demo_rule_seed()
-    print("✓ Demo rule seeded (if missing)")
-    await start_rule_scheduler()
-    print("✓ Rule scheduler started")
-    await start_insights_sync_scheduler()
-    print("✓ Insights sync scheduler started")
-    await start_realtime_cache_scheduler()
-    print("✓ Realtime cache scheduler started")
+
+    # 启动调度器（只负责入队任务）
+    if enable_scheduler:
+        await RuleEngineService.ensure_demo_rule_seed()
+        print("✓ Demo rule seeded (if missing)")
+        await start_rule_scheduler()
+        print("✓ Rule scheduler started (enqueuing tasks)")
+        await start_insights_sync_scheduler()
+        print("✓ Insights sync scheduler started (enqueuing tasks)")
+        await start_realtime_cache_scheduler()
+        print("✓ Realtime cache scheduler started (enqueuing tasks)")
+    else:
+        print("⊗ Scheduler disabled (ENABLE_SCHEDULER not set)")
+
+    # 启动 worker（消费队列中的任务）
+    if enable_worker:
+        from api.services.atomic_task_queue import start_sync_queue_workers
+        await start_sync_queue_workers(concurrency=worker_concurrency)
+        print(f"✓ Task queue workers started (concurrency={worker_concurrency})")
+    else:
+        print("⊗ Workers disabled (ENABLE_WORKER not set)")
 
     yield
 
-    # Shutdown: Close database connection
-    await stop_rule_scheduler()
-    print("✓ Rule scheduler stopped")
-    await stop_insights_sync_scheduler()
-    print("✓ Insights sync scheduler stopped")
-    await stop_realtime_cache_scheduler()
-    print("✓ Realtime cache scheduler stopped")
+    # Shutdown: Stop services
+    if enable_scheduler:
+        await stop_rule_scheduler()
+        print("✓ Rule scheduler stopped")
+        await stop_insights_sync_scheduler()
+        print("✓ Insights sync scheduler stopped")
+        await stop_realtime_cache_scheduler()
+        print("✓ Realtime cache scheduler stopped")
+
+    if enable_worker:
+        from api.services.atomic_task_queue import stop_sync_queue_workers
+        await stop_sync_queue_workers()
+        print("✓ Task queue workers stopped")
+
     await close_redis()
     print("✓ Redis connection closed")
     await close_db_connection()
