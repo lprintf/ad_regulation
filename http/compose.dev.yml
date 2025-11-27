@@ -32,6 +32,11 @@ services:
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-}
+      # 开发环境：启用调度器和 worker（基于 Leader Election）
+      # 多个开发实例会自动选举 Leader，避免重复调度
+      ENABLE_SCHEDULER: "true"   # 启用调度器（Leader Election）
+      ENABLE_WORKER: "true"      # 启用 worker 消费任务
+      WORKER_CONCURRENCY: "5"    # 开发环境降低并发数
     env_file:
       - .env
     extra_hosts:

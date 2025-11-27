@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from redis.asyncio import Redis
 
-from utils.redis_client import get_redis_client
+from utils.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +228,7 @@ async def get_sync_queue() -> AtomicTaskQueue:
     """获取同步任务队列单例"""
     global _sync_queue
     if _sync_queue is None:
-        redis = await get_redis_client()
+        redis = get_redis()
         _sync_queue = AtomicTaskQueue("tasks:insights_sync", redis)
 
         # 延迟注册 handler（避免循环导入）

@@ -10,7 +10,7 @@ import socket
 from typing import Optional
 
 from redis.asyncio import Redis
-from utils.redis_client import get_redis_client
+from utils.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ async def get_leader_election() -> SchedulerLeaderElection:
     """获取选举器单例"""
     global _leader_election
     if _leader_election is None:
-        redis = await get_redis_client()
+        redis = get_redis()
         _leader_election = SchedulerLeaderElection(redis)
     return _leader_election
 
