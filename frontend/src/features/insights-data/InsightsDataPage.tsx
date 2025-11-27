@@ -971,10 +971,6 @@ const InsightsDataPage = () => {
     setColumnWidths({ ...DEFAULT_COLUMN_WIDTHS })
   }, [])
 
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [aggregatedInsights])
-
   const totalPages = Math.max(1, Math.ceil(aggregatedInsights.length / TABLE_PAGE_SIZE) || 1)
 
   useEffect(() => {
