@@ -126,6 +126,7 @@ class RuleExecutionLogDocument(Document):
     context_snapshot: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
     execution_duration_ms: int | None = None
+    execution_logs: list[str] = Field(default_factory=list)
 
     class Settings:
         name = "rule_execution_logs"

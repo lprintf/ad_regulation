@@ -4,13 +4,14 @@ Rules API endpoints.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
 from api.models.responses import SuccessResponse
 from api.models.rules import (
     RuleBindingCreate,
     RuleBindingResponse,
     RuleBindingUpdate,
+    RuleDefinitionClone,
     RuleDefinitionCreate,
     RuleDefinitionResponse,
     RuleDefinitionUpdate,
@@ -94,6 +95,20 @@ async def update_rule_definition(rule_id: str, request: RuleDefinitionUpdate):
 
 
 @router.post(
+    "/definitions/{rule_id}/clone",
+    response_model=SuccessResponse[RuleDefinitionResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def clone_rule_definition(rule_id: str, request: RuleDefinitionClone):
+    """Clone an existing rule with modified parameters and version."""
+    try:
+        result = await RuleEngineService.clone_rule(rule_id, request)
+        return SuccessResponse(data=result, message="Rule definition cloned")
+    except ValueError as exc:
+        _handle_value_error(exc)
+
+
+@router.post(
     "/bindings",
     response_model=SuccessResponse[RuleBindingResponse],
     status_code=status.HTTP_201_CREATED,
@@ -153,15 +168,75 @@ async def delete_rule_binding(binding_id: str):
         _handle_value_error(exc)
 
 
+@router.get(
+    "/bindings/{binding_id}/executions",
+    response_model=SuccessResponse[RuleExecutionListResponse],
+)
+async def list_binding_executions(
+    binding_id: str,
+    limit: int = Query(default=50, ge=1, le=200, description="Max results"),
+):
+    """List execution history for a specific binding."""
+    try:
+        result = await RuleEngineService.list_binding_executions(binding_id, limit=limit)
+        return SuccessResponse(data=result, message="Binding execution history retrieved")
+    except ValueError as exc:
+        _handle_value_error(exc)
+
+
+async def _execute_rule_background(request: RuleExecutionRequest):
+    """
+    Wrapper for background rule execution with error logging.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        logger.info("Starting background rule execution for binding_id=%s rule_id=%s",
+                   request.binding_id, request.rule_id)
+        result = await RuleEngineService.execute_rule(request)
+        logger.info("Background rule execution completed successfully: %s", result.id)
+    except Exception as exc:
+        logger.exception(
+            "Background rule execution failed for binding_id=%s rule_id=%s: %s",
+            request.binding_id,
+            request.rule_id,
+            exc
+        )
+
+
 @router.post(
     "/execute",
-    response_model=SuccessResponse[RuleExecutionLogResponse],
+    response_model=SuccessResponse[dict],
+    status_code=status.HTTP_202_ACCEPTED,
 )
-async def execute_rule(request: RuleExecutionRequest):
-    """Manually trigger rule execution."""
+async def execute_rule(request: RuleExecutionRequest, background_tasks: BackgroundTasks):
+    """
+    Manually trigger rule execution in background.
+    Returns immediately without waiting for execution to complete.
+    Check execution history for results.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
     try:
-        result = await RuleEngineService.execute_rule(request)
-        return SuccessResponse(data=result, message="Rule execution completed")
+        logger.info("[ENDPOINT] Received execute request for binding_id=%s rule_id=%s",
+                   request.binding_id, request.rule_id)
+
+        # Execute rule in background with error logging wrapper
+        background_tasks.add_task(_execute_rule_background, request)
+
+        logger.info("[ENDPOINT] Background task added successfully")
+
+        return SuccessResponse(
+            data={
+                "status": "accepted",
+                "message": "Rule execution started in background",
+                "binding_id": request.binding_id,
+                "rule_id": request.rule_id,
+            },
+            message="Rule execution task submitted"
+        )
     except ValueError as exc:
         _handle_value_error(exc)
 

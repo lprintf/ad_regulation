@@ -77,6 +77,27 @@ export const updateRuleDefinition = async (
   return data?.data ?? data
 }
 
+export const fetchRuleDefinition = async (ruleId: string): Promise<RuleDefinition> => {
+  const { data } = await apiClient.get(`/rules/definitions/${ruleId}`)
+  return data?.data ?? data
+}
+
+export interface CloneRulePayload {
+  new_name: string
+  new_version?: string
+  parameter_overrides?: Record<string, any>
+  description?: string
+  created_by?: string
+}
+
+export const cloneRuleDefinition = async (
+  ruleId: string,
+  payload: CloneRulePayload
+): Promise<RuleDefinition> => {
+  const { data } = await apiClient.post(`/rules/definitions/${ruleId}/clone`, payload)
+  return data?.data ?? data
+}
+
 export interface RuleBindingFilters {
   ruleId?: string
   entityId?: string
@@ -246,8 +267,8 @@ const mapBindingFromApi = (item: any): RuleBinding => {
     ),
     accountId: accountId || undefined,
     notes: notes || undefined,
-    createdAt: item?.created_at ?? item?.createdAt ?? '',
-    updatedAt: item?.updated_at ?? item?.updatedAt ?? '',
+    created_at: item?.created_at ?? item?.createdAt ?? '',
+    updated_at: item?.updated_at ?? item?.updatedAt ?? '',
     lastExecutedAt: item?.last_executed_at ?? item?.lastExecutedAt ?? undefined
   }
 }
@@ -310,9 +331,37 @@ export const executeRuleManually = async (payload: {
   ruleId?: string
   trigger?: 'manual' | 'test'
   context?: Record<string, unknown>
+  params?: Record<string, any>
 }) => {
-  const { data } = await apiClient.post('/rules/execute', payload)
+  const body: any = {
+    binding_id: payload.bindingId,
+    rule_id: payload.ruleId,
+    trigger: payload.trigger,
+    context: payload.context,
+    params: payload.params,
+  }
+
+  const { data } = await apiClient.post('/rules/execute', body)
   return data?.data ?? data
+}
+
+export const fetchBindingExecutions = async (
+  bindingId: string,
+  limit: number = 50
+): Promise<{ executions: RuleExecutionLog[]; total: number }> => {
+  const { data } = await apiClient.get(`/rules/bindings/${bindingId}/executions`, {
+    params: { limit }
+  })
+
+  const payload = data?.data ?? data
+  const executions = Array.isArray(payload?.executions)
+    ? payload.executions.map(mapExecutionLogFromApi)
+    : []
+
+  return {
+    executions,
+    total: payload?.total ?? executions.length
+  }
 }
 
 export const fetchSchedulerTasks = async (): Promise<SchedulerTask[]> => {

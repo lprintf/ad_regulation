@@ -1,33 +1,37 @@
 """
 Utility service to build execution context with real advertising data.
-Fetches ad metadata and insights metrics without mutating delivery status.
+Fetches insights metrics from MongoDB+Redis hybrid cache for fast, realtime execution.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from typing import Any
 
 from facebook_business.adobjects.ad import Ad
-from facebook_business.adobjects.adsinsights import AdsInsights
 
-from utils.db import RuleBindingDocument
-from utils.fb_api_flyweight_factory import get_api
+from utils.db import RuleBindingDocument, AdEntityNamesDocument
+
+logger = logging.getLogger(__name__)
 
 
 class RuleContextService:
     """Builds contextual data for rule execution."""
 
-    LAST_N_DAYS = 14
+    LAST_N_DAYS = 14  # Default fallback
 
     @staticmethod
-    async def build_context(binding: RuleBindingDocument | None) -> dict[str, Any]:
+    async def build_context(
+        binding: RuleBindingDocument | None,
+        params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         if binding is None:
             return {}
 
         if binding.entity_type == "ad":
-            return await RuleContextService._build_ad_context(binding)
+            return await RuleContextService._build_ad_context(binding, params)
 
         return {
             "rule_name": binding.rule_name,
@@ -38,105 +42,118 @@ class RuleContextService:
         }
 
     @staticmethod
-    async def _build_ad_context(binding: RuleBindingDocument) -> dict[str, Any]:
+    async def _build_ad_context(
+        binding: RuleBindingDocument,
+        params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """
+        Build context for ad entity using MongoDB+Redis hybrid insights.
+        Fast and realtime - combines historical (MongoDB) + recent (Redis) data.
+        """
+        from api.services.insights_service import InsightsService
+
         ad_account_id = binding.metadata.get("ad_account_id")
         if not ad_account_id:
             raise ValueError(
                 "Rule binding metadata must include 'ad_account_id' for ad entities"
             )
 
-        api = await get_api(ad_account_id)
-        ad = Ad(binding.entity_id, api=api)
-
+        ad_id = binding.entity_id
         fetch_errors: list[str] = []
-        ad_details: dict[str, Any] = {}
-        targeting_countries: list[str] = []
 
-        async def _fetch_ad_details() -> tuple[dict[str, Any], list[str]]:
-            fields = [
-                Ad.Field.id,
-                Ad.Field.name,
-                Ad.Field.account_id,
-                Ad.Field.configured_status,
-                Ad.Field.effective_status,
-                Ad.Field.created_time,
-                Ad.Field.updated_time,
-                Ad.Field.targeting,
-            ]
+        # Use lookback_days from params if provided, otherwise use default
+        lookback_days = RuleContextService.LAST_N_DAYS
+        if params and "lookback_days" in params:
+            lookback_days = int(params["lookback_days"])
 
-            def _call() -> dict[str, Any]:
-                return ad.api_get(fields=fields)
-
-            raw_details = await asyncio.to_thread(_call)
-            details = {
-                "ad_id": raw_details.get(Ad.Field.id),
-                "name": raw_details.get(Ad.Field.name),
-                "account_id": raw_details.get(Ad.Field.account_id),
-                "configured_status": raw_details.get(Ad.Field.configured_status),
-                "effective_status": raw_details.get(Ad.Field.effective_status),
-                "created_time": raw_details.get(Ad.Field.created_time),
-                "updated_time": raw_details.get(Ad.Field.updated_time),
-            }
-
-            targeting = raw_details.get(Ad.Field.targeting) or {}
-            countries = (
-                targeting.get("geo_locations", {}).get("countries")
-                if isinstance(targeting, dict)
-                else None
-            )
-            return details, list(countries or [])
-
-        async def _fetch_insights() -> list[dict[str, Any]]:
-            since = (
-                datetime.utcnow() - timedelta(days=RuleContextService.LAST_N_DAYS)
-            ).strftime("%Y-%m-%d")
-            until = datetime.utcnow().strftime("%Y-%m-%d")
-
-            fields = [
-                AdsInsights.Field.spend,
-                AdsInsights.Field.clicks,
-                AdsInsights.Field.impressions,
-            ]
-
-            def _call() -> list[dict[str, Any]]:
-                results = ad.get_insights(
-                    fields=fields,
-                    params={
-                        "time_range": {"since": since, "until": until},
-                        "time_increment": 1,
-                    },
+        # Support evaluation_date for historical simulation
+        reference_date = datetime.utcnow()
+        if params and params.get("evaluation_date"):
+            try:
+                from datetime import datetime as dt
+                evaluation_date_str = params["evaluation_date"]
+                reference_date = dt.strptime(evaluation_date_str, "%Y-%m-%d")
+                logger.info(
+                    "Using evaluation_date=%s for historical simulation",
+                    evaluation_date_str
                 )
-                rows: list[dict[str, Any]] = []
-                for item in results:
-                    rows.append(
-                        {
-                            "spend": float(item.get(AdsInsights.Field.spend, 0) or 0),
-                            "clicks": int(item.get(AdsInsights.Field.clicks, 0) or 0),
-                            "impressions": int(
-                                item.get(AdsInsights.Field.impressions, 0) or 0
-                            ),
-                            "date_start": item.get("date_start"),
-                            "date_stop": item.get("date_stop"),
-                        }
-                    )
-                return rows
+            except Exception as exc:
+                logger.warning(
+                    "Invalid evaluation_date format '%s', using current date: %s",
+                    params.get("evaluation_date"),
+                    exc
+                )
 
-            return await asyncio.to_thread(_call)
-
-        details_result, insights_result = await asyncio.gather(
-            _fetch_ad_details(), _fetch_insights(), return_exceptions=True
+        # Query ad entity metadata from MongoDB
+        ad_entity = await AdEntityNamesDocument.find_one(
+            AdEntityNamesDocument.account_id == ad_account_id,
+            AdEntityNamesDocument.entity_type == "ad",
+            AdEntityNamesDocument.entity_id == ad_id
         )
 
-        if isinstance(details_result, Exception):
-            fetch_errors.append(f"Ad details fetch error: {details_result}")
-        else:
-            ad_details, targeting_countries = details_result
+        ad_details: dict[str, Any] = {
+            "ad_id": ad_id,
+            "name": ad_entity.entity_name if ad_entity else None,
+            "account_id": ad_account_id,
+            "configured_status": ad_entity.configured_status if ad_entity else None,
+            "effective_status": ad_entity.effective_status if ad_entity else None,
+        }
 
-        if isinstance(insights_result, Exception):
-            fetch_errors.append(f"Ad insights fetch error: {insights_result}")
-            insights_rows = []
-        else:
-            insights_rows = insights_result
+        # Query insights from MongoDB+Redis hybrid (last N days from reference_date)
+        since = reference_date - timedelta(days=lookback_days)
+        until = reference_date
+
+        since_str = since.strftime("%Y-%m-%d")
+        until_str = until.strftime("%Y-%m-%d")
+
+        try:
+            insights_data = await InsightsService.query_insights_mongo_redis(
+                ad_account_id=ad_account_id,
+                since=since_str,
+                until=until_str,
+                level="ad",
+                time_increment=1,
+                object_level="ad",
+                object_ids=[ad_id],
+                mask_ad_ids=False,
+            )
+
+            # Extract insights records
+            insights_records = insights_data.get("insights", [])
+
+            if not insights_records:
+                logger.warning(
+                    "No insights data found for ad_id=%s in last %d days",
+                    ad_id,
+                    lookback_days
+                )
+                fetch_errors.append(
+                    f"No insights data found for ad {ad_id}"
+                )
+
+        except Exception as exc:
+            logger.error(
+                "Failed to fetch insights for ad %s: %s", ad_id, exc, exc_info=True
+            )
+            fetch_errors.append(f"Failed to fetch insights: {exc}")
+            insights_records = []
+
+        # Transform to daily samples format
+        insights_rows: list[dict[str, Any]] = []
+        for record in insights_records:
+            insights_rows.append({
+                "spend": record.get("spend", 0),
+                "clicks": record.get("clicks", 0),
+                "impressions": record.get("impressions", 0),
+                "reach": record.get("reach", 0),
+                "inline_link_clicks": record.get("inline_link_clicks", 0),
+                "outbound_clicks": record.get("outbound_clicks", 0),
+                "landing_page_view": record.get("landing_page_view", 0),
+                "onsite_web_purchase": record.get("onsite_web_purchase", 0),
+                "onsite_web_purchase_value": record.get("onsite_web_purchase_value", 0),
+                "date_start": record.get("date_start"),
+                "date_stop": record.get("date_stop") or record.get("date_start"),
+            })
 
         # Aggregate metrics
         total_spend = sum(row["spend"] for row in insights_rows)
@@ -145,6 +162,30 @@ class RuleContextService:
 
         ctr = (total_clicks / total_impressions * 100) if total_impressions else 0.0
         cpc = (total_spend / total_clicks) if total_clicks else None
+
+        # Try to get targeting info from metadata or Facebook API (lightweight call)
+        targeting_countries: list[str] = []
+        try:
+            from utils.fb_api_flyweight_factory import get_api
+            api = await get_api(ad_account_id)
+            ad = Ad(ad_id, api=api)
+
+            def _fetch_targeting() -> list[str]:
+                ad_data = ad.api_get(fields=[Ad.Field.targeting])
+                targeting = ad_data.get(Ad.Field.targeting) or {}
+                countries = (
+                    targeting.get("geo_locations", {}).get("countries")
+                    if isinstance(targeting, dict)
+                    else None
+                )
+                return list(countries or [])
+
+            targeting_countries = await asyncio.to_thread(_fetch_targeting)
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch targeting for ad %s: %s", ad_id, exc
+            )
+            # Don't add to fetch_errors since this is optional
 
         return {
             "rule_name": binding.rule_name,
@@ -162,11 +203,11 @@ class RuleContextService:
                 "ctr": ctr,
                 "ctr_unit": "percent",
                 "cpc": cpc,
-                "currency": "USD",  # Facebook insights normalised currency
+                "currency": "USD",
                 "window": {
                     "since": insights_rows[0]["date_start"] if insights_rows else None,
                     "until": insights_rows[-1]["date_stop"] if insights_rows else None,
-                    "days": RuleContextService.LAST_N_DAYS,
+                    "days": lookback_days,
                 },
                 "daily_samples": insights_rows,
             },

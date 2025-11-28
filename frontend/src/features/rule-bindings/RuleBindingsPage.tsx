@@ -4,6 +4,7 @@ import {
   createRuleBinding,
   deleteRuleBinding,
   fetchRuleBindings,
+  fetchRuleDefinition,
   fetchRuleDefinitions,
   updateRuleBinding
 } from '../../api/ruleEngine'
@@ -15,6 +16,7 @@ import type {
 } from '../../types/rule-engine'
 import { formatDateTime } from '../../lib/datetime'
 import RuleBindingForm, { type RuleBindingFormValues } from './RuleBindingForm'
+import RuleBindingTestPanel from './RuleBindingTestPanel'
 import { mergeBindingMetadata } from './utils'
 
 const entityTypeLabel: Record<RuleEntityType, string> = {
@@ -47,6 +49,7 @@ const RuleBindingsPage = () => {
 
   const [isCreating, setIsCreating] = useState(false)
   const [editingBinding, setEditingBinding] = useState<RuleBinding | null>(null)
+  const [selectedBinding, setSelectedBinding] = useState<RuleBinding | null>(null)
 
   const rulesQuery = useQuery({
     queryKey: ['rule-definitions', { status: 'published' satisfies RuleStatus, scope: 'bindings' }],
@@ -63,6 +66,15 @@ const RuleBindingsPage = () => {
         activeOnly: filters.activeOnly
       }),
     staleTime: 15_000
+  })
+
+  // Query for selected binding's rule definition (to get parameters_schema)
+  const selectedRuleQuery = useQuery({
+    queryKey: ['rule-definition', selectedBinding?.ruleId],
+    queryFn: () => selectedBinding ? fetchRuleDefinition(selectedBinding.ruleId) : Promise.resolve(null),
+    enabled: !!selectedBinding,
+    staleTime: 0,  // Always treat data as stale
+    refetchOnMount: 'always',  // Always refetch when component mounts
   })
 
   const toPayload = (values: RuleBindingFormValues): RuleBindingPayload => {
@@ -289,13 +301,19 @@ const RuleBindingsPage = () => {
                       </div>
                     </td>
                     <td>
-                      <div>{formatDateTime(binding.updatedAt)}</div>
+                      <div>{formatDateTime(binding.updated_at)}</div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                        创建于 {formatDateTime(binding.createdAt)}
+                        创建于 {formatDateTime(binding.created_at)}
                       </div>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: '0.5rem' }}>
+                      <div style={{ display: 'inline-flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <button
+                          className="button button--primary"
+                          onClick={() => setSelectedBinding(binding)}
+                        >
+                          测试
+                        </button>
                         <button
                           className="button button--secondary"
                           onClick={() => {
@@ -357,6 +375,27 @@ const RuleBindingsPage = () => {
             createMutation.isPending || updateMutation.isPending || deleteMutation.isPending
           }
         />
+      )}
+
+      {selectedBinding && (
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setSelectedBinding(null)}
+            style={{
+              position: 'absolute',
+              top: '1rem',
+              right: '1rem',
+              zIndex: 10
+            }}
+            className="button button--ghost"
+          >
+            ✕ 关闭测试面板
+          </button>
+          <RuleBindingTestPanel
+            binding={selectedBinding}
+            parametersSchema={selectedRuleQuery.data?.parameters_schema}
+          />
+        </div>
       )}
     </div>
   )

@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  cloneRuleDefinition,
   createRuleDefinition,
   fetchRuleDefinitions,
   updateRuleDefinition
 } from '../../api/ruleEngine'
+import type { CloneRulePayload } from '../../api/ruleEngine'
 import type { RuleDefinition, RuleStatus } from '../../types/rule-engine'
 import { formatDateTime } from '../../lib/datetime'
 import RuleDefinitionForm, { type RuleDefinitionFormValues } from './RuleDefinitionForm'
@@ -50,6 +52,14 @@ const RuleDefinitionsPage = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rule-definitions'] })
       setEditingRule(null)
+    }
+  })
+
+  const cloneMutation = useMutation({
+    mutationFn: ({ ruleId, payload }: { ruleId: string; payload: CloneRulePayload }) =>
+      cloneRuleDefinition(ruleId, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['rule-definitions'] })
     }
   })
 
@@ -187,22 +197,44 @@ const RuleDefinitionsPage = () => {
                       )}
                     </td>
                     <td>
-                      <div>{formatDateTime(rule.updatedAt)}</div>
+                      <div>{formatDateTime(rule.updated_at)}</div>
                       <div style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
-                        创建于 {formatDateTime(rule.createdAt)}
+                        创建于 {formatDateTime(rule.created_at)}
                       </div>
                     </td>
-                    <td>{rule.publishedBy ?? '—'}</td>
+                    <td>{rule.published_by ?? '—'}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <button
-                        className="button button--secondary"
-                        onClick={() => {
-                          setIsCreating(false)
-                          setEditingRule(rule)
-                        }}
-                      >
-                        编辑
-                      </button>
+                      <div style={{ display: 'inline-flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <button
+                          className="button button--secondary"
+                          onClick={() => {
+                            setIsCreating(false)
+                            setEditingRule(rule)
+                          }}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          className="button button--ghost"
+                          onClick={() => {
+                            const newName = prompt('新规则名称', `${rule.name}_copy`)
+                            if (newName) {
+                              cloneMutation.mutate({
+                                ruleId: rule.id,
+                                payload: {
+                                  new_name: newName,
+                                  new_version: rule.version,
+                                  parameter_overrides: {},
+                                  description: rule.description
+                                }
+                              })
+                            }
+                          }}
+                          disabled={cloneMutation.isPending}
+                        >
+                          复制
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

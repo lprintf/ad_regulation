@@ -18,6 +18,7 @@ from api.models.rules import (
     RuleBindingCreate,
     RuleBindingResponse,
     RuleBindingUpdate,
+    RuleDefinitionClone,
     RuleDefinitionCreate,
     RuleDefinitionResponse,
     RuleDefinitionUpdate,
@@ -112,6 +113,7 @@ def _serialize_execution(doc: RuleExecutionLogDocument) -> RuleExecutionLogRespo
         context_snapshot=doc.context_snapshot,
         error_message=doc.error_message,
         execution_duration_ms=doc.execution_duration_ms,
+        execution_logs=doc.execution_logs,
     )
 
 
@@ -197,6 +199,58 @@ class RuleEngineService:
             logger.info("Updated rule definition '%s'", doc.name)
 
         return _serialize_rule_definition(doc)
+
+    @staticmethod
+    async def clone_rule(rule_id: str, data: RuleDefinitionClone) -> RuleDefinitionResponse:
+        """Clone an existing rule with modified parameters and version."""
+        # Get original rule
+        original = await RuleDefinitionDocument.get(_to_object_id(rule_id))
+        if original is None:
+            raise ValueError("Rule not found")
+
+        # Check new name doesn't exist
+        existing = await RuleDefinitionDocument.find_one(
+            RuleDefinitionDocument.name == data.new_name
+        )
+        if existing:
+            raise ValueError(f"Rule name '{data.new_name}' already exists")
+
+        # Clone parameters_schema and apply overrides
+        cloned_schema = dict(original.parameters_schema)
+        for param_key, override_value in data.parameter_overrides.items():
+            if param_key in cloned_schema:
+                # Update only the default value in the parameter schema
+                cloned_schema[param_key]["default"] = override_value
+            else:
+                logger.warning(
+                    "Parameter override key '%s' not found in original schema, skipping",
+                    param_key
+                )
+
+        # Create new rule document
+        now = datetime.utcnow()
+        cloned_rule = RuleDefinitionDocument(
+            name=data.new_name,
+            description=data.description if data.description else original.description,
+            version=data.new_version,
+            code=original.code,  # Keep original code
+            parameters_schema=cloned_schema,
+            tags=original.tags,
+            status=RuleStatus.DRAFT.value,  # Always start as draft
+            is_active=False,
+            created_by=data.created_by,
+            updated_by=data.created_by,
+            created_at=now,
+            updated_at=now,
+        )
+        await cloned_rule.insert()
+        logger.info(
+            "Cloned rule '%s' to '%s' (version %s)",
+            original.name,
+            cloned_rule.name,
+            cloned_rule.version
+        )
+        return _serialize_rule_definition(cloned_rule)
 
     # ===== Binding management =====
 
@@ -334,7 +388,7 @@ class RuleEngineService:
             context = request.context
         else:
             try:
-                context = await RuleContextService.build_context(binding)
+                context = await RuleContextService.build_context(binding, request.params)
             except Exception as exc:
                 logger.warning(
                     "Failed to build context for rule '%s': %s",
@@ -380,6 +434,7 @@ class RuleEngineService:
             context_snapshot=context,
             error_message=error_message,
             execution_duration_ms=duration_ms,
+            execution_logs=execution_result.get("execution_logs", []),
         )
         await log_doc.insert()
 
@@ -398,6 +453,34 @@ class RuleEngineService:
             .limit(limit)
             .to_list()
         )
+        return RuleExecutionListResponse(
+            executions=[_serialize_execution(doc) for doc in docs],
+            total=len(docs),
+        )
+
+    @staticmethod
+    async def list_binding_executions(
+        binding_id: str, limit: int = 50
+    ) -> RuleExecutionListResponse:
+        """List execution history for a specific binding."""
+        from bson import ObjectId
+        from bson.dbref import DBRef
+
+        binding_obj_id = _to_object_id(binding_id)
+
+        # Create DBRef for the binding (Links are stored as DBRefs in MongoDB)
+        binding_ref = DBRef(collection="rule_bindings", id=binding_obj_id)
+
+        # Query executions using raw MongoDB query (since Link comparison doesn't work)
+        docs = (
+            await RuleExecutionLogDocument.find(
+                {"binding": binding_ref}
+            )
+            .sort(-RuleExecutionLogDocument.actual_start_time)
+            .limit(limit)
+            .to_list()
+        )
+
         return RuleExecutionListResponse(
             executions=[_serialize_execution(doc) for doc in docs],
             total=len(docs),

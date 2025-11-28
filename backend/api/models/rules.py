@@ -4,7 +4,7 @@ Pydantic models for rule engine domain.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any
 
@@ -78,6 +78,22 @@ class RuleDefinitionUpdate(BaseModel):
     is_active: bool | None = None
     version: str | None = None
     updated_by: str | None = Field(default=None, description="Operator user id")
+
+
+class RuleDefinitionClone(BaseModel):
+    """Clone an existing rule with modified parameters and version."""
+
+    new_name: str = Field(..., description="Name for the cloned rule")
+    new_version: str = Field(default="1.0.0", description="Version for the cloned rule")
+    parameter_overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Override default values in parameters_schema"
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional new description (uses original if not provided)"
+    )
+    created_by: str | None = Field(default=None, description="Operator user id")
 
 
 class RuleDefinitionResponse(RuleDefinitionBase):
@@ -159,6 +175,7 @@ class RuleExecutionLogResponse(BaseModel):
     context_snapshot: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
     execution_duration_ms: int | None = None
+    execution_logs: list[str] = Field(default_factory=list)
 
 
 class RuleExecutionListResponse(BaseModel):

@@ -3,25 +3,37 @@ export type RuleStatus = 'draft' | 'published' | 'disabled'
 export interface RuleParameter {
   key: string
   label?: string
-  type: 'string' | 'number' | 'boolean' | 'enum'
+  type: 'string' | 'number' | 'integer' | 'boolean' | 'enum'
   required?: boolean
   defaultValue?: string | number | boolean | null
+  default?: string | number | boolean | null  // Support both naming conventions
   description?: string
   options?: Array<{ value: string; label: string }>
+
+  // Enhanced schema fields for smart forms
+  min?: number
+  max?: number
+  step?: number
+  unit?: string
+  hint?: string
 }
+
+// Type for parameters_schema as a record (backend format)
+export type ParametersSchema = Record<string, RuleParameter>
 
 export interface RuleDefinition {
   id: string
   name: string
   code: string
-  version: number
+  version: string  // Changed from number to string
   status: RuleStatus
   description?: string
   tags?: string[]
   parameters?: RuleParameter[]
-  createdAt: string
-  updatedAt: string
-  publishedBy?: string
+  parameters_schema?: ParametersSchema  // Backend format (snake_case)
+  created_at: string
+  updated_at: string
+  published_by?: string
 }
 
 export type RuleEntityType = 'account' | 'campaign' | 'adset' | 'ad'
@@ -39,8 +51,8 @@ export interface RuleBinding {
   active: boolean
   accountId?: string
   notes?: string
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
   lastExecutedAt?: string
 }
 
@@ -69,6 +81,7 @@ export interface RuleExecutionLog {
   metrics?: Record<string, unknown>
   contextSnapshot?: Record<string, unknown>
   errorMessage?: string
+  executionLogs?: string[]
 }
 
 export type SchedulerNamespace = 'rules' | 'insights'
