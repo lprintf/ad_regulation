@@ -1,4 +1,10 @@
 import apiClient from '../lib/apiClient'
+import {
+  extractResponseData,
+  extractPaginatedResponse,
+  extractSingleObject,
+  type PaginatedResult
+} from '../lib/apiResponse'
 import type {
   BindingSource,
   ExecutionStatus,
@@ -45,28 +51,14 @@ export const fetchRuleDefinitions = async (
     }
   })
 
-  if (Array.isArray(data?.data)) {
-    return {
-      items: data.data,
-      total: data.data.length,
-      page: 1,
-      pageSize: data.data.length
-    }
-  }
-
-  return data?.data ?? {
-    items: [],
-    total: 0,
-    page: 1,
-    pageSize: 50
-  }
+  return extractPaginatedResponse<RuleDefinition>(data)
 }
 
 export const createRuleDefinition = async (
   payload: RuleDefinitionPayload
 ): Promise<RuleDefinition> => {
   const { data } = await apiClient.post('/rules/definitions', payload)
-  return data?.data ?? data
+  return extractSingleObject<RuleDefinition>(data)
 }
 
 export const updateRuleDefinition = async (
@@ -74,12 +66,12 @@ export const updateRuleDefinition = async (
   payload: Partial<RuleDefinitionPayload>
 ): Promise<RuleDefinition> => {
   const { data } = await apiClient.patch(`/rules/definitions/${ruleId}`, payload)
-  return data?.data ?? data
+  return extractSingleObject<RuleDefinition>(data)
 }
 
 export const fetchRuleDefinition = async (ruleId: string): Promise<RuleDefinition> => {
   const { data } = await apiClient.get(`/rules/definitions/${ruleId}`)
-  return data?.data ?? data
+  return extractSingleObject<RuleDefinition>(data)
 }
 
 export interface CloneRulePayload {
@@ -95,7 +87,7 @@ export const cloneRuleDefinition = async (
   payload: CloneRulePayload
 ): Promise<RuleDefinition> => {
   const { data } = await apiClient.post(`/rules/definitions/${ruleId}/clone`, payload)
-  return data?.data ?? data
+  return extractSingleObject<RuleDefinition>(data)
 }
 
 export interface RuleBindingFilters {
@@ -125,39 +117,7 @@ export const fetchRuleBindings = async (
     }
   })
 
-  const rawItems: any[] = (() => {
-    if (Array.isArray(data?.data)) {
-      return data.data
-    }
-    if (Array.isArray(data)) {
-      return data
-    }
-    if (Array.isArray(data?.items)) {
-      return data.items
-    }
-    const payload = data?.data
-    if (Array.isArray(payload?.items)) {
-      return payload.items
-    }
-    if (Array.isArray(payload)) {
-      return payload
-    }
-    return []
-  })()
-
-  const items = rawItems.map(mapBindingFromApi)
-
-  const total =
-    data?.data?.total ??
-    data?.total ??
-    rawItems.length
-
-  return {
-    items,
-    total,
-    page: data?.data?.page ?? 1,
-    pageSize: data?.data?.pageSize ?? (items.length || 50)
-  }
+  return extractPaginatedResponse<RuleBinding>(data, mapBindingFromApi)
 }
 
 export const createRuleBinding = async (
@@ -170,7 +130,7 @@ export const createRuleBinding = async (
     source: payload.source,
     metadata: payload.metadata
   })
-  return mapBindingFromApi(data?.data ?? data)
+  return mapBindingFromApi(extractSingleObject(data))
 }
 
 export const updateRuleBinding = async (
@@ -185,7 +145,7 @@ export const updateRuleBinding = async (
     body['is_active'] = payload.active
   }
   const { data } = await apiClient.patch(`/rules/bindings/${bindingId}`, body)
-  return mapBindingFromApi(data?.data ?? data)
+  return mapBindingFromApi(extractSingleObject(data))
 }
 
 export const deleteRuleBinding = async (bindingId: string): Promise<void> => {
@@ -213,33 +173,18 @@ export const fetchExecutionLogs = async (
     }
   })
 
-  if (Array.isArray(data?.data)) {
-    return {
-      items: data.data,
-      total: data.data.length,
-      page: 1,
-      pageSize: data.data.length
-    }
-  }
+  const result = extractPaginatedResponse<RuleExecutionLog>(data, mapExecutionLogFromApi)
 
-  const payload = data?.data ?? data ?? {}
-  const items =
-    payload.executions ??
-    payload.items ??
-    (Array.isArray(payload) ? payload : [])
-  const total =
-    payload.total ??
-    (Array.isArray(items) ? items.length : 0)
-
-  const normalizedItems = Array.isArray(items)
-    ? items.map(mapExecutionLogFromApi)
-    : []
+  // Handle legacy response format if needed
+  const payload = extractResponseData(data, {})
+  const items = result.items.length > 0 ? result.items :
+    (payload.executions ?? payload.items ?? (Array.isArray(payload) ? payload : [])).map(mapExecutionLogFromApi)
 
   return {
-    items: normalizedItems,
-    total: typeof total === 'number' ? total : 0,
-    page: payload.page ?? 1,
-    pageSize: payload.pageSize ?? (normalizedItems.length || 50)
+    items,
+    total: result.total || items.length,
+    page: result.page,
+    pageSize: result.pageSize
   }
 }
 
@@ -347,7 +292,7 @@ export const executeRuleManually = async (payload: {
   }
 
   const { data } = await apiClient.post('/rules/execute', body)
-  return data?.data ?? data
+  return extractSingleObject(data)
 }
 
 export const fetchBindingExecutions = async (
@@ -358,7 +303,7 @@ export const fetchBindingExecutions = async (
     params: { limit }
   })
 
-  const payload = data?.data ?? data
+  const payload = extractResponseData(data, {})
   const executions = Array.isArray(payload?.executions)
     ? payload.executions.map(mapExecutionLogFromApi)
     : []
@@ -399,12 +344,13 @@ export const fetchEntityTimeline = async (params: {
       entity_type: params.entityType,
     },
   })
-  return data?.data ?? data
+  return extractSingleObject<EntityTimelineResponse>(data)
 }
 
 export const fetchSchedulerTasks = async (): Promise<SchedulerTask[]> => {
   const { data } = await apiClient.get('/scheduler/tasks')
-  const payload = data?.data ?? data ?? []
+  const payload = extractResponseData(data, [])
+
   if (Array.isArray(payload)) {
     return payload.map(mapSchedulerTaskFromApi)
   }
@@ -420,7 +366,7 @@ export const updateSchedulerTaskState = async (params: {
 }) => {
   const { namespace, taskId, action } = params
   const { data } = await apiClient.post(`/scheduler/tasks/${namespace}/${taskId}/${action}`)
-  return data?.data ?? data
+  return extractSingleObject(data)
 }
 
 export const runSchedulerTaskNow = async (params: {
@@ -429,7 +375,7 @@ export const runSchedulerTaskNow = async (params: {
 }) => {
   const { namespace, taskId } = params
   const { data } = await apiClient.post(`/scheduler/tasks/${namespace}/${taskId}/run`)
-  return data?.data ?? data
+  return extractSingleObject(data)
 }
 
 export const updateSchedulerTask = async (params: {
@@ -439,7 +385,7 @@ export const updateSchedulerTask = async (params: {
 }): Promise<SchedulerTask> => {
   const { namespace, taskId, payload } = params
   const { data } = await apiClient.patch(`/scheduler/tasks/${namespace}/${taskId}`, payload)
-  const body = data?.data ?? data
+  const body = extractSingleObject(data)
   return mapSchedulerTaskFromApi(body)
 }
 
