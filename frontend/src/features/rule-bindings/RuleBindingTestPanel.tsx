@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { Modal } from 'antd'
 import { executeRuleManually, fetchBindingExecutions } from '../../api/ruleEngine'
 import type { RuleBinding, RuleExecutionLog, ParametersSchema } from '../../types/rule-engine'
 import SmartParameterForm from './SmartParameterForm'
@@ -137,11 +138,9 @@ const RuleBindingTestPanel = ({ binding, parametersSchema }: RuleBindingTestPane
                       <td>
                         <button
                           className="button button--ghost button--small"
-                          onClick={() => setSelectedExecutionId(
-                            selectedExecutionId === execution.id ? null : execution.id
-                          )}
+                          onClick={() => setSelectedExecutionId(execution.id)}
                         >
-                          {selectedExecutionId === execution.id ? '关闭' : '查看'}
+                          查看
                         </button>
                       </td>
                     </tr>
@@ -150,17 +149,25 @@ const RuleBindingTestPanel = ({ binding, parametersSchema }: RuleBindingTestPane
               </table>
             </div>
           )}
-
-          {/* Execution Details */}
-          {selectedExecution && (
-            <ExecutionDetails execution={selectedExecution} onClose={() => setSelectedExecutionId(null)} />
-          )}
         </div>
       </div>
+
+      {/* Execution Details Modal */}
+      <Modal
+        title="执行详情"
+        open={!!selectedExecution}
+        onCancel={() => setSelectedExecutionId(null)}
+        footer={null}
+        width={800}
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
+      >
+        {selectedExecution && <ExecutionDetails execution={selectedExecution} />}
+      </Modal>
 
       {/* Parameters Dialog */}
       {showParamsDialog && (
         <ParametersDialog
+          binding={binding}
           parametersSchema={parametersSchema}
           parameters={parameters}
           onChange={setParameters}
@@ -174,6 +181,7 @@ const RuleBindingTestPanel = ({ binding, parametersSchema }: RuleBindingTestPane
 }
 
 interface ParametersDialogProps {
+  binding: RuleBinding
   parametersSchema?: ParametersSchema
   parameters: Record<string, any>
   onChange: (params: Record<string, any>) => void
@@ -183,6 +191,7 @@ interface ParametersDialogProps {
 }
 
 const ParametersDialog = ({
+  binding,
   parametersSchema,
   parameters,
   onChange,
@@ -257,10 +266,9 @@ const ParametersDialog = ({
 
 interface ExecutionDetailsProps {
   execution: RuleExecutionLog
-  onClose: () => void
 }
 
-const ExecutionDetails = ({ execution, onClose }: ExecutionDetailsProps) => {
+const ExecutionDetails = ({ execution }: ExecutionDetailsProps) => {
   const { actions = [], reasonCodes = [], metrics = {}, executionLogs = [] } = execution
 
   const getDecisionClass = () => {
@@ -286,18 +294,7 @@ const ExecutionDetails = ({ execution, onClose }: ExecutionDetailsProps) => {
   const decisionClass = getDecisionClass()
 
   return (
-    <div style={{
-      marginTop: '1rem',
-      padding: '1.5rem',
-      border: '1px solid var(--color-border)',
-      borderRadius: '8px',
-      backgroundColor: 'var(--color-background)'
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h5 style={{ fontSize: '1rem', fontWeight: 600 }}>执行详情</h5>
-        <button onClick={onClose} className="button button--ghost button--small">关闭</button>
-      </div>
-
+    <div>
       {/* Error Message */}
       {execution.errorMessage && (
         <div style={{

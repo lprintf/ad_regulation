@@ -80,8 +80,10 @@ services:
       - traefik.enable=true
       - traefik.http.routers.fb.rule=Host(`fb.${DOMAIN}`)
       - traefik.http.routers.fb.entrypoints=web
-      - traefik.http.routers.fb.middlewares=strip-user-headers@file,oidc-auth@file
+      - traefik.http.routers.fb.middlewares=strip-user-headers@file,oauth2-auth@file
       - traefik.http.services.fb.loadbalancer.server.port=80
+      # 使用优化的 HTTP/1.1 连接池 transport
+      - traefik.http.services.fb.loadbalancer.serverstransport=http1-pool@file
     restart: unless-stopped
 
 volumes:

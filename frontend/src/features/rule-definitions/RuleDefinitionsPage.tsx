@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Dropdown, Breadcrumb } from 'antd'
 import {
   cloneRuleDefinition,
   createRuleDefinition,
@@ -74,9 +75,45 @@ const RuleDefinitionsPage = () => {
 
   const isBusy = isFetching || createMutation.isPending || updateMutation.isPending
 
+  const isEditingOrCreating = isCreating || !!editingRule
+
+  const handleCancelEdit = () => {
+    setIsCreating(false)
+    setEditingRule(null)
+  }
+
   return (
     <div className="page">
-      <section className="card">
+      {/* Breadcrumb navigation - shown when editing or creating */}
+      {isEditingOrCreating && (
+        <Breadcrumb
+          items={[
+            {
+              title: (
+                <a onClick={handleCancelEdit} style={{ cursor: 'pointer' }}>
+                  规则定义
+                </a>
+              )
+            },
+            {
+              title: editingRule ? `编辑规则: ${editingRule.name}` : '创建新规则'
+            }
+          ]}
+          style={{ marginBottom: '1rem' }}
+        />
+      )}
+
+      {/* Conditional rendering: show list or edit form */}
+      {isEditingOrCreating ? (
+        <RuleDefinitionForm
+          mode={editingRule ? 'edit' : 'create'}
+          initialValues={editingRule ?? undefined}
+          onSubmit={editingRule ? handleUpdate : handleCreate}
+          onCancel={handleCancelEdit}
+          isSubmitting={createMutation.isPending || updateMutation.isPending}
+        />
+      ) : (
+        <section className="card">
         <div className="card__header">
           <div>
             <div className="card__title">规则定义</div>
@@ -204,37 +241,43 @@ const RuleDefinitionsPage = () => {
                     </td>
                     <td>{rule.published_by ?? '—'}</td>
                     <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        <button
-                          className="button button--secondary"
-                          onClick={() => {
-                            setIsCreating(false)
-                            setEditingRule(rule)
-                          }}
-                        >
-                          编辑
-                        </button>
-                        <button
-                          className="button button--ghost"
-                          onClick={() => {
-                            const newName = prompt('新规则名称', `${rule.name}_copy`)
-                            if (newName) {
-                              cloneMutation.mutate({
-                                ruleId: rule.id,
-                                payload: {
-                                  new_name: newName,
-                                  new_version: rule.version,
-                                  parameter_overrides: {},
-                                  description: rule.description
+                      <Dropdown
+                        menu={{
+                          items: [
+                            {
+                              key: 'edit',
+                              label: '编辑',
+                              onClick: () => {
+                                setIsCreating(false)
+                                setEditingRule(rule)
+                              }
+                            },
+                            {
+                              key: 'clone',
+                              label: '复制',
+                              disabled: cloneMutation.isPending,
+                              onClick: () => {
+                                const newName = prompt('新规则名称', `${rule.name}_copy`)
+                                if (newName) {
+                                  cloneMutation.mutate({
+                                    ruleId: rule.id,
+                                    payload: {
+                                      new_name: newName,
+                                      new_version: rule.version,
+                                      parameter_overrides: {},
+                                      description: rule.description
+                                    }
+                                  })
                                 }
-                              })
+                              }
                             }
-                          }}
-                          disabled={cloneMutation.isPending}
-                        >
-                          复制
+                          ]
+                        }}
+                      >
+                        <button className="button button--secondary">
+                          操作 ▼
                         </button>
-                      </div>
+                      </Dropdown>
                     </td>
                   </tr>
                 ))}
@@ -250,18 +293,6 @@ const RuleDefinitionsPage = () => {
           <div className="empty-state">暂无规则定义，请先创建。</div>
         )}
       </section>
-
-      {(isCreating || editingRule) && (
-        <RuleDefinitionForm
-          mode={editingRule ? 'edit' : 'create'}
-          initialValues={editingRule ?? undefined}
-          onSubmit={editingRule ? handleUpdate : handleCreate}
-          onCancel={() => {
-            setIsCreating(false)
-            setEditingRule(null)
-          }}
-          isSubmitting={createMutation.isPending || updateMutation.isPending}
-        />
       )}
     </div>
   )

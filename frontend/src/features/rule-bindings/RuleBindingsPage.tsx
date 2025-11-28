@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Dropdown, Breadcrumb } from 'antd'
 import {
   createRuleBinding,
   deleteRuleBinding,
@@ -158,9 +159,67 @@ const RuleBindingsPage = () => {
     )
   }, [bindingsQuery.data?.items, filters.entityId])
 
+  const isEditingOrCreating = isCreating || !!editingBinding
+
+  const handleCancelEdit = () => {
+    setIsCreating(false)
+    setEditingBinding(null)
+  }
+
+  // Determine which view to show
+  const currentView = isEditingOrCreating ? 'form' : selectedBinding ? 'execution' : 'list'
+
   return (
     <div className="page">
-      <section className="card">
+      {/* Breadcrumb navigation - shown when viewing execution or editing */}
+      {currentView !== 'list' && (
+        <Breadcrumb
+          items={[
+            {
+              title: (
+                <a
+                  onClick={() => {
+                    setSelectedBinding(null)
+                    handleCancelEdit()
+                  }}
+                  style={{ cursor: 'pointer' }}
+                >
+                  规则绑定
+                </a>
+              )
+            },
+            {
+              title:
+                currentView === 'execution'
+                  ? `${selectedBinding!.ruleName} - ${selectedBinding!.entityId}`
+                  : editingBinding
+                    ? `编辑绑定: ${editingBinding.entityId}`
+                    : '创建新绑定'
+            }
+          ]}
+          style={{ marginBottom: '1rem' }}
+        />
+      )}
+
+      {/* Conditional rendering: show list, execution panel, or edit form */}
+      {currentView === 'execution' ? (
+        <RuleBindingTestPanel
+          binding={selectedBinding!}
+          parametersSchema={selectedRuleQuery.data?.parameters_schema}
+        />
+      ) : currentView === 'form' ? (
+        <RuleBindingForm
+          mode={editingBinding ? 'edit' : 'create'}
+          initialValues={editingBinding ?? undefined}
+          rules={publishedRules}
+          onSubmit={editingBinding ? handleUpdate : handleCreate}
+          onCancel={handleCancelEdit}
+          isSubmitting={
+            createMutation.isPending || updateMutation.isPending || deleteMutation.isPending
+          }
+        />
+      ) : (
+        <section className="card">
         <div className="card__header">
           <div>
             <div className="card__title">规则绑定</div>
@@ -307,46 +366,53 @@ const RuleBindingsPage = () => {
                       </div>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        <button
-                          className="button button--primary"
-                          onClick={() => setSelectedBinding(binding)}
-                        >
-                          测试
-                        </button>
-                        <button
-                          className="button button--secondary"
-                          onClick={() => {
-                            setIsCreating(false)
-                            setEditingBinding(binding)
-                          }}
-                        >
-                          编辑
-                        </button>
-                        <button
-                          className="button button--ghost"
-                          onClick={() =>
-                            updateMutation.mutate({
-                              bindingId: binding.id,
-                              values: { active: !binding.active }
-                            })
-                          }
-                        >
-                          {binding.active ? '停用' : '启用'}
-                        </button>
-                        <button
-                          className="button button--danger"
-                          onClick={() => {
-                            if (
-                              confirm(`确定要删除与 ${binding.entityId} 的绑定吗？操作不可恢复。`)
-                            ) {
-                              deleteMutation.mutate(binding.id)
+                      <Dropdown
+                        menu={{
+                          items: [
+                            {
+                              key: 'test',
+                              label: '运行',
+                              onClick: () => setSelectedBinding(binding)
+                            },
+                            {
+                              key: 'edit',
+                              label: '编辑',
+                              onClick: () => {
+                                setIsCreating(false)
+                                setEditingBinding(binding)
+                              }
+                            },
+                            {
+                              key: 'toggle',
+                              label: binding.active ? '停用' : '启用',
+                              onClick: () =>
+                                updateMutation.mutate({
+                                  bindingId: binding.id,
+                                  values: { active: !binding.active }
+                                })
+                            },
+                            {
+                              type: 'divider'
+                            },
+                            {
+                              key: 'delete',
+                              label: '删除',
+                              danger: true,
+                              onClick: () => {
+                                if (
+                                  confirm(`确定要删除与 ${binding.entityId} 的绑定吗？操作不可恢复。`)
+                                ) {
+                                  deleteMutation.mutate(binding.id)
+                                }
+                              }
                             }
-                          }}
-                        >
-                          删除
+                          ]
+                        }}
+                      >
+                        <button className="button button--secondary">
+                          操作 ▼
                         </button>
-                      </div>
+                      </Dropdown>
                     </td>
                   </tr>
                 ))}
@@ -360,42 +426,6 @@ const RuleBindingsPage = () => {
           </div>
         )}
       </section>
-
-      {(isCreating || editingBinding) && (
-        <RuleBindingForm
-          mode={editingBinding ? 'edit' : 'create'}
-          initialValues={editingBinding ?? undefined}
-          rules={publishedRules}
-          onSubmit={editingBinding ? handleUpdate : handleCreate}
-          onCancel={() => {
-            setIsCreating(false)
-            setEditingBinding(null)
-          }}
-          isSubmitting={
-            createMutation.isPending || updateMutation.isPending || deleteMutation.isPending
-          }
-        />
-      )}
-
-      {selectedBinding && (
-        <div style={{ position: 'relative' }}>
-          <button
-            onClick={() => setSelectedBinding(null)}
-            style={{
-              position: 'absolute',
-              top: '1rem',
-              right: '1rem',
-              zIndex: 10
-            }}
-            className="button button--ghost"
-          >
-            ✕ 关闭测试面板
-          </button>
-          <RuleBindingTestPanel
-            binding={selectedBinding}
-            parametersSchema={selectedRuleQuery.data?.parameters_schema}
-          />
-        </div>
       )}
     </div>
   )

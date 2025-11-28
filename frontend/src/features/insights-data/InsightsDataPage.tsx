@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef, useCallback, useContext } from 'react'
 import type { CSSProperties } from 'react'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { Modal, message, ConfigProvider, Spin } from 'antd'
+import { Modal, message, ConfigProvider, Spin, Tabs } from 'antd'
 import {
   fetchInsightsData,
   syncEntityNames,
@@ -2338,10 +2338,11 @@ const InsightsDataPage = () => {
         {selectedEntityData.length === 0 ? (
           <div style={{ color: 'var(--color-text-muted)' }}>请选择一个实体查看明细数据。</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', padding: '8px 0' }}>
-            {selectedEntityTotals && (
-              <section>
-                <h3 style={{ marginBottom: '12px' }}>基础指标汇总</h3>
+          <Tabs defaultActiveKey="basic" items={[
+            {
+              key: 'basic',
+              label: '基础指标汇总',
+              children: selectedEntityTotals ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
                   {METRIC_COLUMNS.map(column => (
                     <div
@@ -2360,12 +2361,12 @@ const InsightsDataPage = () => {
                     </div>
                   ))}
                 </div>
-              </section>
-            )}
-
-            {selectedEntityDerivedSummary && (
-              <section>
-                <h3 style={{ marginBottom: '12px' }}>扩展指标汇总</h3>
+              ) : null
+            },
+            {
+              key: 'extended',
+              label: '扩展指标汇总',
+              children: selectedEntityDerivedSummary ? (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px' }}>
                   {selectedEntityDerivedSummary.map(item => (
                     <div
@@ -2382,43 +2383,45 @@ const InsightsDataPage = () => {
                     </div>
                   ))}
                 </div>
-              </section>
-            )}
-
-            <section>
-              <h3 style={{ marginBottom: '12px' }}>每日表现</h3>
-              <div className="table-wrapper" style={{ width: '100%', maxWidth: '100%', maxHeight: '420px', overflow: 'auto' }}>
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: '120px' }}>日期</th>
-                      {METRIC_COLUMNS.map(column => (
-                        <th key={`base-${column.key}`}>{column.label}</th>
-                      ))}
-                      {DERIVED_METRICS.map(metric => (
-                        <th key={`derived-${metric.key}`}>{metric.label}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedEntityDailyRows.map(row => (
-                      <tr key={row.date}>
-                        <td>{row.date}</td>
+              ) : null
+            },
+            {
+              key: 'daily',
+              label: '每日表现',
+              children: (
+                <div className="table-wrapper" style={{ width: '100%', maxWidth: '100%', maxHeight: '420px', overflow: 'auto' }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '120px' }}>日期</th>
                         {METRIC_COLUMNS.map(column => (
-                          <td key={`${row.date}-${column.key}`}>
-                            {column.formatter(row.metrics[column.key] ?? 0)}
-                          </td>
+                          <th key={`base-${column.key}`}>{column.label}</th>
                         ))}
-                        {row.derived.map(metric => (
-                          <td key={`${row.date}-${metric.key}`}>{metric.formatter(metric.value)}</td>
+                        {DERIVED_METRICS.map(metric => (
+                          <th key={`derived-${metric.key}`}>{metric.label}</th>
                         ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </div>
+                    </thead>
+                    <tbody>
+                      {selectedEntityDailyRows.map(row => (
+                        <tr key={row.date}>
+                          <td>{row.date}</td>
+                          {METRIC_COLUMNS.map(column => (
+                            <td key={`${row.date}-${column.key}`}>
+                              {column.formatter(row.metrics[column.key] ?? 0)}
+                            </td>
+                          ))}
+                          {row.derived.map(metric => (
+                            <td key={`${row.date}-${metric.key}`}>{metric.formatter(metric.value)}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            }
+          ]} />
         )}
       </Modal>
 

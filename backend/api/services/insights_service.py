@@ -1822,26 +1822,18 @@ class InsightsService:
         account_id_without_prefix = remove_account_id_prefix(ad_account_id)
 
         # Build query based on entity type
+        query_dict = {"account_id": account_id_without_prefix}
         if entity_type == "ad":
-            query_filter = (
-                (InsightsDailyDocument.account_id == account_id_without_prefix)
-                & (InsightsDailyDocument.ad_id == entity_id)
-            )
+            query_dict["ad_id"] = entity_id
         elif entity_type == "adset":
-            query_filter = (
-                (InsightsDailyDocument.account_id == account_id_without_prefix)
-                & (InsightsDailyDocument.adset_id == entity_id)
-            )
+            query_dict["adset_id"] = entity_id
         elif entity_type == "campaign":
-            query_filter = (
-                (InsightsDailyDocument.account_id == account_id_without_prefix)
-                & (InsightsDailyDocument.campaign_id == entity_id)
-            )
+            query_dict["campaign_id"] = entity_id
         else:
             raise ValueError(f"Invalid entity_type: {entity_type}")
 
         # Query all records for this entity, sorted by date
-        docs = await InsightsDailyDocument.find(query_filter).sort(
+        docs = await InsightsDailyDocument.find(query_dict).sort(
             InsightsDailyDocument.date_start
         ).to_list()
 
