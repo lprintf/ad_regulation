@@ -322,7 +322,12 @@ const mapExecutionLogFromApi = (item: any): RuleExecutionLog => {
         ? metricsValue
         : {},
     contextSnapshot: item?.context_snapshot ?? item?.contextSnapshot ?? {},
-    errorMessage: item?.error_message ?? item?.errorMessage ?? undefined
+    errorMessage: item?.error_message ?? item?.errorMessage ?? undefined,
+    executionLogs: Array.isArray(item?.execution_logs)
+      ? item.execution_logs
+      : Array.isArray(item?.executionLogs)
+        ? item.executionLogs
+        : []
   }
 }
 
@@ -362,6 +367,39 @@ export const fetchBindingExecutions = async (
     executions,
     total: payload?.total ?? executions.length
   }
+}
+
+export interface EntityTimelineDataPoint {
+  date: string
+  spend: number
+  clicks: number
+  impressions: number
+}
+
+export interface EntityTimelineResponse {
+  entity_type: string
+  entity_id: string
+  date_range: {
+    since: string
+    until: string
+  }
+  daily_data: EntityTimelineDataPoint[]
+  total_days: number
+}
+
+export const fetchEntityTimeline = async (params: {
+  adAccountId: string
+  entityId: string
+  entityType: string
+}): Promise<EntityTimelineResponse> => {
+  const { data } = await apiClient.get('/insights/entity-timeline', {
+    params: {
+      ad_account_id: params.adAccountId,
+      entity_id: params.entityId,
+      entity_type: params.entityType,
+    },
+  })
+  return data?.data ?? data
 }
 
 export const fetchSchedulerTasks = async (): Promise<SchedulerTask[]> => {

@@ -1,13 +1,26 @@
 import { type ParametersSchema } from '../../types/rule-engine'
+import DateTimelineSelector from '../../components/DateTimelineSelector'
 
 interface SmartParameterFormProps {
   schema: ParametersSchema
   values: Record<string, any>
   onChange: (values: Record<string, any>) => void
   errors?: Record<string, string>
+  // Context for date timeline selector
+  adAccountId?: string
+  entityId?: string
+  entityType?: string
 }
 
-const SmartParameterForm = ({ schema, values, onChange, errors = {} }: SmartParameterFormProps) => {
+const SmartParameterForm = ({
+  schema,
+  values,
+  onChange,
+  errors = {},
+  adAccountId,
+  entityId,
+  entityType
+}: SmartParameterFormProps) => {
   const updateValue = (key: string, value: any) => {
     onChange({ ...values, [key]: value })
   }
@@ -22,6 +35,9 @@ const SmartParameterForm = ({ schema, values, onChange, errors = {} }: SmartPara
           value={values[key]}
           onChange={(value) => updateValue(key, value)}
           error={errors[key]}
+          adAccountId={adAccountId}
+          entityId={entityId}
+          entityType={entityType}
         />
       ))}
     </div>
@@ -34,13 +50,45 @@ interface ParameterFieldProps {
   value: any
   onChange: (value: any) => void
   error?: string
+  adAccountId?: string
+  entityId?: string
+  entityType?: string
 }
 
-const ParameterField = ({ paramKey, config, value, onChange, error }: ParameterFieldProps) => {
+const ParameterField = ({ paramKey, config, value, onChange, error, adAccountId, entityId, entityType }: ParameterFieldProps) => {
   const defaultValue = config.default ?? config.defaultValue
   const currentValue = value !== undefined && value !== null ? value : defaultValue
 
+  // Special handling for evaluation_date with timeline selector
+  const isEvaluationDate = paramKey === 'evaluation_date' && config.type === 'string'
+  const canShowTimeline = isEvaluationDate && adAccountId && entityId && entityType
+
   const renderInput = () => {
+    // Date timeline selector for evaluation_date
+    if (canShowTimeline) {
+      return (
+        <div>
+          <DateTimelineSelector
+            adAccountId={adAccountId!}
+            entityId={entityId!}
+            entityType={entityType!}
+            value={currentValue || ''}
+            onChange={onChange}
+          />
+          <div style={{ marginTop: '0.5rem' }}>
+            <input
+              type="text"
+              className={`input ${error ? 'input--error' : ''}`}
+              value={currentValue || ''}
+              onChange={(e) => onChange(e.target.value)}
+              placeholder="YYYY-MM-DD 或点击图表选择"
+              style={{ width: '100%' }}
+            />
+          </div>
+        </div>
+      )
+    }
+
     switch (config.type) {
       case 'number':
       case 'integer':

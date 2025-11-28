@@ -15,10 +15,6 @@ const RuleBindingTestPanel = ({ binding, parametersSchema }: RuleBindingTestPane
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null)
   const [showParamsDialog, setShowParamsDialog] = useState(false)
 
-  // Debug logging
-  console.log('[RuleBindingTestPanel] parametersSchema:', parametersSchema)
-  console.log('[RuleBindingTestPanel] parametersSchema keys:', parametersSchema ? Object.keys(parametersSchema) : 'undefined')
-
   // Fetch execution history
   const {
     data: executionsData,
@@ -227,6 +223,9 @@ const ParametersDialog = ({
               schema={parametersSchema}
               values={parameters}
               onChange={onChange}
+              adAccountId={binding.metadata?.ad_account_id as string}
+              entityId={binding.entityId}
+              entityType={binding.entityType}
             />
           </div>
         ) : (

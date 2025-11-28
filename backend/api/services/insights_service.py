@@ -1798,6 +1798,89 @@ class InsightsService:
             "date_range": {"since": since, "until": until},
             "last_synced_date": last_synced_date_str,
         }
+
+    @staticmethod
+    async def get_entity_timeline(
+        ad_account_id: str,
+        entity_id: str,
+        entity_type: str,
+    ) -> dict[str, Any]:
+        """
+        Get timeline data for a specific entity.
+
+        Queries MongoDB for daily metrics (spend, clicks, impressions) for the entity,
+        with date range extended by ±1 day for better visualization context.
+
+        Args:
+            ad_account_id: Ad account ID (with act_ prefix)
+            entity_id: Entity ID (ad/adset/campaign)
+            entity_type: Type of entity ("ad", "adset", or "campaign")
+
+        Returns:
+            Dictionary with entity_type, entity_id, date_range, daily_data, total_days
+        """
+        account_id_without_prefix = remove_account_id_prefix(ad_account_id)
+
+        # Build query based on entity type
+        if entity_type == "ad":
+            query_filter = (
+                (InsightsDailyDocument.account_id == account_id_without_prefix)
+                & (InsightsDailyDocument.ad_id == entity_id)
+            )
+        elif entity_type == "adset":
+            query_filter = (
+                (InsightsDailyDocument.account_id == account_id_without_prefix)
+                & (InsightsDailyDocument.adset_id == entity_id)
+            )
+        elif entity_type == "campaign":
+            query_filter = (
+                (InsightsDailyDocument.account_id == account_id_without_prefix)
+                & (InsightsDailyDocument.campaign_id == entity_id)
+            )
+        else:
+            raise ValueError(f"Invalid entity_type: {entity_type}")
+
+        # Query all records for this entity, sorted by date
+        docs = await InsightsDailyDocument.find(query_filter).sort(
+            InsightsDailyDocument.date_start
+        ).to_list()
+
+        if not docs:
+            # No data found - return empty timeline
+            return {
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "date_range": {"since": "", "until": ""},
+                "daily_data": [],
+                "total_days": 0,
+            }
+
+        # Extract daily metrics
+        daily_data = []
+        for doc in docs:
+            daily_data.append({
+                "date": doc.date_start.strftime("%Y-%m-%d"),
+                "spend": float(doc.spend or 0),
+                "clicks": int(doc.clicks or 0),
+                "impressions": int(doc.impressions or 0),
+            })
+
+        # Get date range with ±1 day padding
+        first_date = docs[0].date_start.date()
+        last_date = docs[-1].date_start.date()
+
+        since_padded = (first_date - timedelta(days=1)).strftime("%Y-%m-%d")
+        until_padded = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        return {
+            "entity_type": entity_type,
+            "entity_id": entity_id,
+            "date_range": {"since": since_padded, "until": until_padded},
+            "daily_data": daily_data,
+            "total_days": len(daily_data),
+        }
+
+
 async def _resolve_latest_synced_date(account_id_without_prefix: str) -> date | None:
     docs = (
         await InsightsDailyDocument.find(

@@ -552,3 +552,26 @@ class PredictionResponse(BaseModel):
     evaluation_date: str = Field(
         ..., description="Date of evaluation (typically yesterday, YYYY-MM-DD)"
     )
+
+
+class EntityTimelineDataPoint(BaseModel):
+    """Single data point in entity timeline."""
+
+    date: str = Field(..., description="Date (YYYY-MM-DD)")
+    spend: float = Field(..., description="Total spend for this date")
+    clicks: int = Field(..., description="Total clicks for this date")
+    impressions: int = Field(..., description="Total impressions for this date")
+
+
+class EntityTimelineResponse(BaseModel):
+    """Response model for entity timeline data."""
+
+    entity_type: str = Field(..., description="Entity type (ad/adset/campaign)")
+    entity_id: str = Field(..., description="Entity ID")
+    date_range: dict[str, str] = Field(
+        ..., description="Available date range (since, until) with ±1 day padding"
+    )
+    daily_data: list[EntityTimelineDataPoint] = Field(
+        ..., description="Daily metrics for the entity"
+    )
+    total_days: int = Field(..., description="Total number of days with data")
