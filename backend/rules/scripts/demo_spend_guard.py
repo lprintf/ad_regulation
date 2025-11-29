@@ -170,13 +170,13 @@ def evaluate(context: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
     # ========== Decision Node 3: Performance Evaluation ==========
     logger.info(f"---------- Decision Node 3: Performance Evaluation ----------")
     logger.info(f"CTR Evaluation: {ctr:.2f}% vs threshold {ctr_threshold:.2f}%")
-    logger.info(f"CPC Evaluation: ${cpc:.2f if cpc else 0:.2f} vs threshold ${cpc_threshold:.2f}")
+    logger.info(f"CPC Evaluation: ${(cpc if cpc is not None else 0):.2f} vs threshold ${cpc_threshold:.2f}")
 
     meets_ctr = ctr > ctr_threshold
     meets_cpc = cpc is not None and cpc < cpc_threshold
 
     logger.info(f"CTR Check: {'✅ PASS' if meets_ctr else '❌ FAIL'} ({ctr:.2f}% {'>' if meets_ctr else '<='} {ctr_threshold:.2f}%)")
-    logger.info(f"CPC Check: {'✅ PASS' if meets_cpc else '❌ FAIL'} (${cpc:.2f if cpc else 0} {'<' if meets_cpc else '>='} ${cpc_threshold:.2f})")
+    logger.info(f"CPC Check: {'✅ PASS' if meets_cpc else '❌ FAIL'} (${(cpc if cpc is not None else 0):.2f} {'<' if meets_cpc else '>='} ${cpc_threshold:.2f})")
 
     if meets_ctr and meets_cpc:
         logger.info(f"✅ Performance meets all thresholds - no action needed")

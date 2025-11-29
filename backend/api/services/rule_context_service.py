@@ -141,18 +141,19 @@ class RuleContextService:
         # Transform to daily samples format
         insights_rows: list[dict[str, Any]] = []
         for record in insights_records:
+            metrics = record.get("metrics", {})
             insights_rows.append({
-                "spend": record.get("spend", 0),
-                "clicks": record.get("clicks", 0),
-                "impressions": record.get("impressions", 0),
-                "reach": record.get("reach", 0),
-                "inline_link_clicks": record.get("inline_link_clicks", 0),
-                "outbound_clicks": record.get("outbound_clicks", 0),
-                "landing_page_view": record.get("landing_page_view", 0),
-                "onsite_web_purchase": record.get("onsite_web_purchase", 0),
-                "onsite_web_purchase_value": record.get("onsite_web_purchase_value", 0),
-                "date_start": record.get("date_start"),
-                "date_stop": record.get("date_stop") or record.get("date_start"),
+                "spend": metrics.get("spend", 0),
+                "clicks": metrics.get("clicks", 0),
+                "impressions": metrics.get("impressions", 0),
+                "reach": metrics.get("reach", 0),
+                "inline_link_clicks": metrics.get("inline_link_clicks", 0),
+                "outbound_clicks": metrics.get("outbound_clicks", 0),
+                "landing_page_view": metrics.get("landing_page_view", 0),
+                "onsite_web_purchase": metrics.get("onsite_web_purchase", 0),
+                "onsite_web_purchase_value": metrics.get("onsite_web_purchase_value", 0),
+                "date_start": record.get("date"),
+                "date_stop": record.get("date"),
             })
 
         # Aggregate metrics
