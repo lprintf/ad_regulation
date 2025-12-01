@@ -358,6 +358,16 @@ async def refresh_fb_app_token(
         reference=datetime.now(tz=timezone.utc),
     )
 
+    # Log refresh attempt details
+    import logging
+    logger = logging.getLogger(__name__)
+    if expires_at:
+        old_expires_dt = datetime.fromtimestamp(expires_at, tz=timezone.utc)
+        logger.info(
+            f"Token refresh: app_id={app_id}, user_id={user_id}, "
+            f"old_expires_at={old_expires_dt}, extend_expiry={extend_expiry}"
+        )
+
     exchange_payload = await run_in_threadpool(
         _exchange_access_token,
         auth_doc.app_id,
@@ -368,6 +378,12 @@ async def refresh_fb_app_token(
 
     refreshed_token = exchange_payload["access_token"]
 
+    # Log exchange response
+    logger.info(f"Token exchange response: {exchange_payload}")
+    logger.info(
+        f"Token changed: {auth_doc.access_token[-4:] if auth_doc.access_token else 'N/A'} -> {refreshed_token[-4:]}"
+    )
+
     # Persist the refreshed token and re-sync related metadata.
     seed_info = FbAppSeedInfo(
         app_id=auth_doc.app_id,
@@ -376,6 +392,14 @@ async def refresh_fb_app_token(
     )
 
     result = await sync_fb_app_credentials(seed_info, triggered_by=triggered_by)
+
+    # Log new expiry after sync
+    if result.expires_at:
+        logger.info(
+            f"Token refresh completed: new_expires_at={result.expires_at}, "
+            f"token_changed={auth_doc.access_token[-4:] if auth_doc.access_token else 'N/A'} != {refreshed_token[-4:]}"
+        )
+
     return result
 
 

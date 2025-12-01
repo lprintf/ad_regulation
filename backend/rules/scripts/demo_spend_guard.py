@@ -3,7 +3,10 @@
 当广告花费达到阈值后，评估 CTR 和 CPC 是否达标，未达标时建议暂停。
 """
 
+import logging
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 PARAMETERS_SCHEMA = {
     "evaluation_date": {

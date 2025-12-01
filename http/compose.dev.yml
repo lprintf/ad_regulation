@@ -46,7 +46,10 @@ services:
       - ../backend/api:/app/api:ro
       - ../backend/utils:/app/utils:ro
       - ../backend/baseline:/app/baseline:ro
+      - ../backend/rules:/app/rules:ro
       - ../backend/config.py:/app/config.py:ro
+      # 挂载模型文件目录
+      - ../backend/output/models:/app/models:ro
     depends_on:
       - mongodb
       - redis

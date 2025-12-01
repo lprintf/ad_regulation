@@ -49,6 +49,9 @@ services:
     depends_on:
       - mongodb
       - redis
+    volumes:
+      # 挂载模型文件目录（生产环境也需要）
+      - ../backend/output/models:/app/models:ro
     networks:
       - default  # 内部网络
     restart: unless-stopped
