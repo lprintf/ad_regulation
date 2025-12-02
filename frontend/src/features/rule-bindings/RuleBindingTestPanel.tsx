@@ -16,6 +16,24 @@ const RuleBindingTestPanel = ({ binding, parametersSchema }: RuleBindingTestPane
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null)
   const [showParamsDialog, setShowParamsDialog] = useState(false)
 
+  // Extract ad_account_id from metadata or entity_id
+  // Entity IDs typically have format like "act_123" for accounts or may need to be queried
+  const getAdAccountId = (): string | undefined => {
+    // First check metadata
+    if (binding.metadata?.ad_account_id) {
+      return binding.metadata.ad_account_id as string
+    }
+    // If entity type is account, the entity_id IS the account ID
+    if (binding.entityType === 'account') {
+      return binding.entityId
+    }
+    // For ad/adset/campaign, we may need to query or it might be in metadata
+    // For now, return undefined and let the timeline gracefully handle missing data
+    return undefined
+  }
+
+  const adAccountId = getAdAccountId()
+
   // Fetch execution history
   const {
     data: executionsData,
@@ -168,6 +186,7 @@ const RuleBindingTestPanel = ({ binding, parametersSchema }: RuleBindingTestPane
       {showParamsDialog && (
         <ParametersDialog
           binding={binding}
+          adAccountId={adAccountId}
           parametersSchema={parametersSchema}
           parameters={parameters}
           onChange={setParameters}
@@ -182,6 +201,7 @@ const RuleBindingTestPanel = ({ binding, parametersSchema }: RuleBindingTestPane
 
 interface ParametersDialogProps {
   binding: RuleBinding
+  adAccountId?: string
   parametersSchema?: ParametersSchema
   parameters: Record<string, any>
   onChange: (params: Record<string, any>) => void
@@ -192,6 +212,7 @@ interface ParametersDialogProps {
 
 const ParametersDialog = ({
   binding,
+  adAccountId,
   parametersSchema,
   parameters,
   onChange,
@@ -232,7 +253,7 @@ const ParametersDialog = ({
               schema={parametersSchema}
               values={parameters}
               onChange={onChange}
-              adAccountId={binding.metadata?.ad_account_id as string}
+              adAccountId={adAccountId}
               entityId={binding.entityId}
               entityType={binding.entityType}
             />

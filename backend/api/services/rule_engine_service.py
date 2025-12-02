@@ -608,6 +608,7 @@ class RuleEngineService:
     async def ensure_demo_rule_seed() -> None:
         """
         Ensure the demo spend guard rule definition exists.
+        Extracts PARAMETERS_SCHEMA from the rule script file.
         """
         rule_name = "demo_spend_guard"
         existing = await RuleDefinitionDocument.find_one(
@@ -623,34 +624,25 @@ class RuleEngineService:
             logger.warning("Demo rule script not found at %s", script_path)
             return
 
+        # Extract PARAMETERS_SCHEMA from the script
+        parameters_schema = {}
+        try:
+            # Execute the script to extract PARAMETERS_SCHEMA
+            namespace = {}
+            exec(code, namespace)
+            if "PARAMETERS_SCHEMA" in namespace:
+                parameters_schema = namespace["PARAMETERS_SCHEMA"]
+            else:
+                logger.warning("PARAMETERS_SCHEMA not found in %s, using empty schema", script_path)
+        except Exception as e:
+            logger.error("Failed to extract PARAMETERS_SCHEMA from %s: %s", script_path, e)
+
         now = datetime.utcnow()
         doc = RuleDefinitionDocument(
             name=rule_name,
             description="素材测试规则：花费≥3美金时评估CPC/CTR，未达标建议暂停（仅输出建议，不直接调控）",
             code=code,
-            parameters_schema={
-                "spend_threshold": {
-                    "type": "number",
-                    "default": 3.0,
-                    "unit": "USD",
-                    "description": "Minimum spend before evaluating performance.",
-                },
-                "north_america_cpc_threshold": {
-                    "type": "number",
-                    "default": 3.0,
-                    "unit": "USD",
-                },
-                "rest_of_world_cpc_threshold": {
-                    "type": "number",
-                    "default": 1.5,
-                    "unit": "USD",
-                },
-                "ctr_threshold": {
-                    "type": "number",
-                    "default": 1.0,
-                    "unit": "percent",
-                },
-            },
+            parameters_schema=parameters_schema,
             tags=["demo", "spend_guard", "creative"],
             status=RuleStatus.PUBLISHED.value,
             is_active=True,
@@ -662,7 +654,8 @@ class RuleEngineService:
             published_at=now,
         )
         await doc.insert()
-        logger.info("Seeded demo rule '%s' from %s", rule_name, script_path)
+        logger.info("Seeded demo rule '%s' from %s with %d parameters",
+                    rule_name, script_path, len(parameters_schema))
 
     # ===== Helpers =====
 

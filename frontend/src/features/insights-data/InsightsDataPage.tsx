@@ -12,6 +12,7 @@ import { fetchAdAccounts } from '../../api/adAccounts'
 import type { InsightRecord, InsightsDataResponse } from '../../types/insights'
 import type { RuleEntityType } from '../../types/rule-engine'
 import RuleBindingModal, { type RuleBindingTarget } from './RuleBindingModal'
+import PerformanceTrendChart from './PerformanceTrendChart'
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0
@@ -339,6 +340,7 @@ const InsightsDataPage = () => {
   const [isColumnPickerOpen, setIsColumnPickerOpen] = useState(false)
   const [isRuleBindingModalOpen, setIsRuleBindingModalOpen] = useState(false)
   const [ruleBindingTarget, setRuleBindingTarget] = useState<RuleBindingTarget | null>(null)
+  const [selectedTrendDate, setSelectedTrendDate] = useState<string | null>(null)
   const [isTableMenuOpen, setIsTableMenuOpen] = useState(false)
   const [selectedEntityIds, setSelectedEntityIds] = useState<Record<HierarchyLevel, Set<string>>>(() => createEmptySelectionMap())
   const [drillSelection, setDrillSelection] = useState<Record<HierarchyLevel, string | null>>({
@@ -1498,6 +1500,28 @@ const InsightsDataPage = () => {
     setIsModalOpen(false)
     setDetailEntityId(null)
     setDetailEntityName(null)
+    setSelectedTrendDate(null)
+  }
+
+  const handleTrendDateSelect = (date: string) => {
+    setSelectedTrendDate(date)
+  }
+
+  const handleOpenRuleTestWithDate = () => {
+    if (!detailEntityId || !selectedTrendDate) return
+
+    // Store selected date and entity info in localStorage for rule binding page to pick up
+    const testConfig = {
+      entityId: detailEntityId,
+      entityName: detailEntityName,
+      evaluationDate: selectedTrendDate,
+      entityType: resultLevel,
+      timestamp: Date.now()
+    }
+    localStorage.setItem('rule_test_config', JSON.stringify(testConfig))
+
+    // Navigate to rule bindings page
+    window.location.href = '/rule-bindings'
   }
 
   const toggleRowSelection = (entityId: string, checked: boolean) => {
@@ -2418,6 +2442,47 @@ const InsightsDataPage = () => {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              )
+            },
+            {
+              key: 'trend',
+              label: '趋势图表',
+              children: (
+                <div>
+                  <PerformanceTrendChart
+                    data={selectedEntityData}
+                    onDateSelect={handleTrendDateSelect}
+                    selectedDate={selectedTrendDate}
+                  />
+                  {selectedTrendDate && (
+                    <div style={{
+                      marginTop: '1rem',
+                      padding: '1rem',
+                      background: '#f0f9ff',
+                      border: '1px solid #3b82f6',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <div>
+                        <div style={{ fontWeight: 600, color: '#1e40af', marginBottom: '0.25rem' }}>
+                          已选择测试日期: {selectedTrendDate}
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                          点击右侧按钮，使用此日期作为 evaluation_date 参数进行规则测试
+                        </div>
+                      </div>
+                      <button
+                        onClick={handleOpenRuleTestWithDate}
+                        className="button button--primary"
+                        style={{ whiteSpace: 'nowrap' }}
+                      >
+                        测试规则
+                      </button>
+                    </div>
+                  )}
                 </div>
               )
             }

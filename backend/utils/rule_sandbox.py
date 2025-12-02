@@ -100,6 +100,8 @@ def execute_rule_script(
     local_vars: dict[str, Any] = {}
     global_vars: dict[str, Any] = {
         "__builtins__": SAFE_BUILTINS,
+        "__name__": "__rule_script__",  # Provide __name__ for logging and imports
+        "__file__": "<rule_script>",     # Provide __file__ for compatibility
         "logger": logger,  # Provide logger to the script
     }
 

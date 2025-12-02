@@ -127,9 +127,12 @@ const DateTimelineSelector = ({
 
     const canvas = canvasRef.current
     const rect = canvas.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const dailyData = timeline.daily_data
 
+    // Scale mouse coordinates to match canvas internal resolution
+    const scaleX = canvas.width / rect.width
+    const x = (e.clientX - rect.left) * scaleX
+
+    const dailyData = timeline.daily_data
     const padding = { left: 50, right: 20 }
     const chartWidth = canvas.width - padding.left - padding.right
 
@@ -147,9 +150,12 @@ const DateTimelineSelector = ({
 
     const canvas = canvasRef.current
     const rect = canvas.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const dailyData = timeline.daily_data
 
+    // Scale mouse coordinates to match canvas internal resolution
+    const scaleX = canvas.width / rect.width
+    const x = (e.clientX - rect.left) * scaleX
+
+    const dailyData = timeline.daily_data
     const padding = { left: 50, right: 20 }
     const chartWidth = canvas.width - padding.left - padding.right
 

@@ -89,6 +89,35 @@ const ParameterField = ({ paramKey, config, value, onChange, error, adAccountId,
       )
     }
 
+    // evaluation_date without timeline (missing ad account info)
+    if (isEvaluationDate) {
+      return (
+        <div>
+          <input
+            type="text"
+            className={`input ${error ? 'input--error' : ''}`}
+            value={currentValue || ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="YYYY-MM-DD（手动输入日期）"
+            style={{ width: '100%' }}
+          />
+          {!adAccountId && (
+            <div style={{
+              marginTop: '0.5rem',
+              padding: '0.5rem',
+              background: '#fff3cd',
+              border: '1px solid #ffc107',
+              borderRadius: '4px',
+              fontSize: '0.85rem',
+              color: '#856404'
+            }}>
+              ⚠️ 无法加载时间轴图表：缺少广告账号信息。请在绑定规则时设置 ad_account_id。
+            </div>
+          )}
+        </div>
+      )
+    }
+
     switch (config.type) {
       case 'number':
       case 'integer':
