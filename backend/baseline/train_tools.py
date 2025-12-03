@@ -92,17 +92,36 @@ def build_hgbt(
 # 4.1) 模型保存
 # -----------------------------
 def save_model(model, path):
-    """保存模型。"""
+    """保��模型及其特征名称列表。"""
     import joblib
 
-    return joblib.dump(model, path)
+    # 如果传入的是完整的训练结果字典，提取模型和特征名称
+    if isinstance(model, dict) and "model" in model:
+        clf = model["model"]
+        feature_names = model.get("feature_names", [])
+        # 保存为字典
+        model_package = {
+            "model": clf,
+            "feature_names": feature_names,
+        }
+        return joblib.dump(model_package, path)
+    else:
+        # 向后兼容：直接保存模型对象
+        return joblib.dump(model, path)
 
 
 def load_model(path) -> HistGradientBoostingClassifier:
-    """加载模型。"""
+    """加载模型，返回模型对象或包含特征名称的字典。"""
     import joblib
 
-    return joblib.load(path)
+    loaded = joblib.load(path)
+
+    # 如果是字典格式（新版本），返回整个包
+    if isinstance(loaded, dict) and "model" in loaded:
+        return loaded
+    else:
+        # 向后兼容：返回模型对象
+        return loaded
 
 
 # -----------------------------
@@ -235,9 +254,13 @@ def train_model(
 
 if __name__ == "__main__":
     import pandas as pd
+    import os
 
-    feat = pd.read_feather("models/feat.feather")
-    labels = pd.read_feather("models/labels.feather")
+    # Detect if running in container or on host
+    models_path = "models" if os.path.exists("models/feat.feather") else "output/models"
+
+    feat = pd.read_feather(f"{models_path}/feat.feather")
+    labels = pd.read_feather(f"{models_path}/labels.feather")
 
     train_result = train_model(
         feat,
@@ -247,10 +270,18 @@ if __name__ == "__main__":
     )
     print(train_result.keys())
     print(train_result.get("val_auc"))
-    path_list = save_model(train_result["model"], "models/model.feather")
+
+    # Save with full train_result dict to include feature_names
+    path_list = save_model(train_result, f"{models_path}/model.feather")
     print(path_list)
 
-    model = load_model(path_list[0])
+    model_package = load_model(path_list[0])
+    if isinstance(model_package, dict):
+        model = model_package["model"]
+        print(f"Feature names saved: {len(model_package.get('feature_names', []))} features")
+    else:
+        model = model_package
+
     feat_clip = feat.iloc[:10]
     print(feat_clip)
     pred_proba = model.predict_proba(feat_clip.drop(columns=["ad_id", "date"]))
