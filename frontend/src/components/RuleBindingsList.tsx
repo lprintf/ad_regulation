@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Spin, Modal } from 'antd'
+import { Modal, Spinner } from '@/components/ui'
 import { fetchRuleBindings, deleteRuleBinding, updateRuleBinding, fetchBindingExecutions } from '../api/ruleEngine'
 import type { RuleBinding, RuleExecutionLog } from '../types/rule-engine'
 import { formatDateTime } from '../lib/datetime'
@@ -53,14 +53,13 @@ const ExecutionLogsModal = ({
     <Modal
       title={`执行日志 - ${ruleName}`}
       open={open}
-      onCancel={onClose}
-      footer={null}
+      onClose={onClose}
       width={900}
     >
       {isLoading ? (
-        <div style={{ padding: '2rem', textAlign: 'center' }}>
-          <Spin size="small" />
-          <span style={{ marginLeft: '0.5rem' }}>加载执行日志...</span>
+        <div className="flex items-center justify-center gap-2 py-8">
+          <Spinner size="sm" />
+          <span className="text-muted-foreground">加载执行日志...</span>
         </div>
       ) : executions.length === 0 ? (
         <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
@@ -177,9 +176,9 @@ const RuleBindingsList = ({
 
   if (isLoading) {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center' }}>
-        <Spin size="small" />
-        <span style={{ marginLeft: '0.5rem' }}>加载绑定列表...</span>
+      <div className="flex items-center justify-center gap-2 py-8">
+        <Spinner size="sm" />
+        <span className="text-muted-foreground">加载绑定列表...</span>
       </div>
     )
   }

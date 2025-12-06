@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { Spin } from 'antd'
+import { Loading } from '@/components/ui'
 import AppLayout from './components/layout/AppLayout'
 
 // 路由级懒加载
@@ -13,16 +13,7 @@ const App = () => {
   return (
     <BrowserRouter>
       <AppLayout>
-        <Suspense fallback={
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '60vh'
-          }}>
-            <Spin size="large" tip="加载中..." />
-          </div>
-        }>
+        <Suspense fallback={<Loading tip="加载中..." className="h-[60vh]" />}>
           <Routes>
             <Route index element={<Navigate to="/ads" replace />} />
             <Route path="/ads" element={<AdManagementPage />} />

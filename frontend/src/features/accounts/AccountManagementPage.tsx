@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Modal, Tabs } from 'antd'
+import { Modal, Tabs } from '@/components/ui'
 import {
   fetchFbAppTokens,
   refreshFbAppToken,
@@ -240,7 +240,7 @@ const AuthRecordsTab = () => {
         </>
       )}
 
-      <Modal title={`添加 ${channelConfig[selectedChannel].label} 授权`} open={authModalOpen} onCancel={() => setAuthModalOpen(false)} footer={null} width={500}>
+      <Modal title={`添加 ${channelConfig[selectedChannel].label} 授权`} open={authModalOpen} onClose={() => setAuthModalOpen(false)} width={500}>
         <AuthorizationPanel channel={selectedChannel} onClose={() => setAuthModalOpen(false)} />
       </Modal>
     </div>
@@ -352,7 +352,7 @@ const SyncAccountCard = ({ item }: { item: SyncOverviewItem }) => {
         </div>
       </div>
 
-      <Modal title={`${showHistory === 'mongodb' ? 'MongoDB' : 'Redis'} 同步历史 - ${item.accountName || item.accountId}`} open={!!showHistory} onCancel={() => setShowHistory(null)} footer={null} width={700}>
+      <Modal title={`${showHistory === 'mongodb' ? 'MongoDB' : 'Redis'} 同步历史 - ${item.accountName || item.accountId}`} open={!!showHistory} onClose={() => setShowHistory(null)} width={700}>
         {historyQuery.isLoading ? (
           <div>加载中...</div>
         ) : historyQuery.isError ? (

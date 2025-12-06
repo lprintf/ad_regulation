@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { Modal } from 'antd'
+import { Modal } from '@/components/ui'
 import { executeRuleManually, fetchBindingExecutions } from '../../api/ruleEngine'
 import type { RuleBinding, RuleExecutionLog, ParametersSchema } from '../../types/rule-engine'
 import SmartParameterForm from './SmartParameterForm'
@@ -159,10 +159,8 @@ const RuleBindingTestPanel = ({ binding, parametersSchema }: RuleBindingTestPane
       <Modal
         title="执行详情"
         open={!!selectedExecution}
-        onCancel={() => setSelectedExecutionId(null)}
-        footer={null}
+        onClose={() => setSelectedExecutionId(null)}
         width={800}
-        styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }}
       >
         {selectedExecution && <ExecutionDetails execution={selectedExecution} />}
       </Modal>

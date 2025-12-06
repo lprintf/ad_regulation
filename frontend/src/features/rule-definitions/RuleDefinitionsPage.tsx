@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Modal, message, Tabs, Dropdown, Breadcrumb } from 'antd'
+import { Modal, Tabs, Dropdown, Breadcrumb, toast } from '@/components/ui'
 import { 
   fetchAvailableRules, 
   fetchRuleConfigs, 
@@ -107,10 +107,10 @@ const RuleDefinitionsPage = () => {
       setCloneModalOpen(false)
       setCloneTarget(null)
       setCloneForm({ name: '', description: '', overrides: {} })
-      message.success('规则配置创建成功')
+      toast.success('规则配置创建成功')
     },
     onError: (err: any) => {
-      message.error(err?.response?.data?.detail || '创建失败')
+      toast.error(err?.response?.data?.detail || '创建失败')
     }
   })
 
@@ -118,7 +118,7 @@ const RuleDefinitionsPage = () => {
     mutationFn: deleteRuleConfig,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rule-configs'] })
-      message.success('规则配置已删除')
+      toast.success('规则配置已删除')
     }
   })
 
@@ -319,7 +319,7 @@ const RuleDefinitionsPage = () => {
 
           <Tabs
             defaultActiveKey="info"
-            style={{ padding: '0 1rem 1rem' }}
+            className="px-4 pb-4"
             items={[
               {
                 key: 'info',
@@ -510,10 +510,10 @@ const RuleDefinitionsPage = () => {
         <>
           <Breadcrumb
             items={[
-              { title: <a onClick={() => setSelectedBinding(null)} style={{ cursor: 'pointer' }}>规则绑定</a> },
+              { title: '规则绑定', onClick: () => setSelectedBinding(null) },
               { title: `${selectedBinding!.ruleName} - ${selectedBinding!.entityId}` }
             ]}
-            style={{ marginBottom: '1rem' }}
+            className="mb-4"
           />
           <RuleBindingTestPanel binding={selectedBinding!} parametersSchema={selectedRuleQuery.data?.parameters_schema} />
         </>
@@ -525,10 +525,10 @@ const RuleDefinitionsPage = () => {
         <>
           <Breadcrumb
             items={[
-              { title: <a onClick={handleCancelBindingEdit} style={{ cursor: 'pointer' }}>规则绑定</a> },
+              { title: '规则绑定', onClick: handleCancelBindingEdit },
               { title: editingBinding ? `编辑绑定: ${editingBinding.entityId}` : '创建新绑定' }
             ]}
-            style={{ marginBottom: '1rem' }}
+            className="mb-4"
           />
           <RuleBindingForm
             mode={editingBinding ? 'edit' : 'create'}
@@ -628,18 +628,14 @@ const RuleDefinitionsPage = () => {
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <Dropdown
-                        menu={{
-                          items: [
-                            { key: 'test', label: '运行', onClick: () => setSelectedBinding(binding) },
-                            { key: 'edit', label: '编辑', onClick: () => { setIsCreatingBinding(false); setEditingBinding(binding) } },
-                            { key: 'toggle', label: binding.active ? '停用' : '启用', onClick: () => updateBindingMutation.mutate({ bindingId: binding.id, values: { active: !binding.active } }) },
-                            { type: 'divider' },
-                            { key: 'delete', label: '删除', danger: true, onClick: () => { if (confirm(`确定要删除与 ${binding.entityId} 的绑定吗？`)) deleteBindingMutation.mutate(binding.id) } }
-                          ]
-                        }}
-                      >
-                        <button className="button button--secondary">操作 ▼</button>
-                      </Dropdown>
+                        items={[
+                          { key: 'test', label: '运行', onClick: () => setSelectedBinding(binding) },
+                          { key: 'edit', label: '编辑', onClick: () => { setIsCreatingBinding(false); setEditingBinding(binding) } },
+                          { key: 'toggle', label: binding.active ? '停用' : '启用', onClick: () => updateBindingMutation.mutate({ bindingId: binding.id, values: { active: !binding.active } }) },
+                          { key: 'delete', label: '删除', danger: true, onClick: () => { if (confirm(`确定要删除与 ${binding.entityId} 的绑定吗？`)) deleteBindingMutation.mutate(binding.id) } }
+                        ]}
+                        trigger={<button className="button button--secondary">操作 ▼</button>}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -685,12 +681,16 @@ const RuleDefinitionsPage = () => {
       <Modal
         title="复制规则配置"
         open={cloneModalOpen}
-        onCancel={() => { setCloneModalOpen(false); setCloneTarget(null) }}
-        onOk={handleCloneSubmit}
-        okText="创建"
-        cancelText="取消"
-        confirmLoading={createConfigMutation.isPending}
+        onClose={() => { setCloneModalOpen(false); setCloneTarget(null) }}
         width={700}
+        footer={
+          <>
+            <button className="button button--ghost" onClick={() => { setCloneModalOpen(false); setCloneTarget(null) }}>取消</button>
+            <button className="button button--primary" onClick={handleCloneSubmit} disabled={createConfigMutation.isPending}>
+              {createConfigMutation.isPending ? '创建中...' : '创建'}
+            </button>
+          </>
+        }
       >
         {cloneTarget && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>

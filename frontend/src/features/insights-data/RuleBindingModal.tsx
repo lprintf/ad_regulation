@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Modal, message, Spin } from 'antd'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Modal, Spinner, toast } from '@/components/ui'
 import type { RuleEntityType } from '../../types/rule-engine'
 import { createRuleBinding } from '../../api/ruleEngine'
 import { useEntityRuleBindings, usePublishedRules } from '../rule-bindings/hooks'
@@ -53,13 +53,13 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
     mutationFn: createRuleBinding,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rule-bindings'] })
-      message.success('规则绑定成功')
+      toast.success('规则绑定成功')
       onClose()
     },
     onError: error => {
       const content =
         error instanceof Error ? error.message : '规则绑定失败，请稍后再试。'
-      message.error(content)
+      toast.error(content)
     }
   })
 
@@ -86,18 +86,16 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
     return `${target.entityName ?? target.entityId} (${target.entityId})`
   }, [target])
 
+  const handleClose = () => {
+    if (createBindingMutation.isPending) return
+    onClose()
+  }
+
   return (
     <Modal
       title="绑定规则"
       open={open && Boolean(target)}
-      onCancel={() => {
-        if (createBindingMutation.isPending) {
-          return
-        }
-        onClose()
-      }}
-      destroyOnClose
-      footer={null}
+      onClose={handleClose}
       width={640}
     >
       {!target ? (
@@ -112,10 +110,10 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
           </section>
 
           {isRuleError ? (
-            <div style={{ color: 'var(--color-danger)' }}>规则列表加载失败，请刷新页面。</div>
+            <div className="text-destructive">规则列表加载失败，请刷新页面。</div>
           ) : isLoadingRules ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Spin size="small" />
+            <div className="flex items-center gap-2">
+              <Spinner size="sm" />
               <span>加载规则列表...</span>
             </div>
           ) : rules.length === 0 ? (
@@ -147,8 +145,8 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
           <div style={{ borderTop: '1px solid var(--color-border, #eee)', paddingTop: '1rem' }}>
             <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>已绑定规则</div>
             {isLoadingBindings ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Spin size="small" />
+              <div className="flex items-center gap-2">
+                <Spinner size="sm" />
                 <span>加载绑定...</span>
               </div>
             ) : existingBindings.length === 0 ? (

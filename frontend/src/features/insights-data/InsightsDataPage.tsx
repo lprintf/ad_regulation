@@ -1,7 +1,7 @@
-import { useMemo, useState, useEffect, useRef, useCallback, useContext } from 'react'
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import type { CSSProperties } from 'react'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
-import { Modal, message, ConfigProvider, Spin, Tabs } from 'antd'
+import { Modal, Spinner, Tabs, toast } from '@/components/ui'
 import {
   fetchInsightsData,
   syncEntityNames,
@@ -367,11 +367,7 @@ const InsightsDataPage = () => {
   })
   const tableMenuRef = useRef<HTMLDivElement | null>(null)
   const [syncingEntityIds, setSyncingEntityIds] = useState<Set<string>>(() => new Set())
-  const configContext = useContext(ConfigProvider.ConfigContext)
-  const columnModalPrefix = useMemo(
-    () => (configContext?.getPrefixCls ? configContext.getPrefixCls('insights-column-picker') : 'insights-column-picker'),
-    [configContext]
-  )
+  const columnModalPrefix = 'insights-column-picker'
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(() => new Set())
   const [activeAccountIds, setActiveAccountIds] = useState<Set<string>>(() => new Set())
   const {
@@ -958,7 +954,7 @@ const InsightsDataPage = () => {
         const isVisible = prev.includes(metricKey)
         if (isVisible) {
           if (prev.length === 1) {
-            message.warning('至少保留 1 个指标列')
+            toast.warning('至少保留 1 个指标列')
             return prev
           }
           return prev.filter(key => key !== metricKey)
@@ -1189,10 +1185,9 @@ const InsightsDataPage = () => {
         try {
           for (let idx = 0; idx < entityIdBatches.length; idx += 1) {
             const batchIds = entityIdBatches[idx]
-            message.loading({
-              content: `正在获取名称 ${idx + 1}/${entityIdBatches.length}（${batchIds.length} 个实体）...`,
-              key: `sync-${accountId}`
-            })
+            if (idx === 0) {
+              toast.loading(`正在同步实体名称...`)
+            }
 
             const result = await syncEntityNames({
               adAccountId: accountId,
@@ -1213,21 +1208,15 @@ const InsightsDataPage = () => {
             }
           }
 
+          toast.dismiss()
+
           if (aggregateResult.rateLimited > 0) {
-            message.warning({
-              content: `同步受到速率限制 (成功: ${aggregateResult.synced}, 失败: ${aggregateResult.failed}, 限制: ${aggregateResult.rateLimited})。请稍后再试。`,
-              key: `sync-${accountId}`,
-              duration: 5
-            })
+            toast.warning(`同步受到速率限制 (成功: ${aggregateResult.synced}, 失败: ${aggregateResult.failed})。请稍后再试。`)
             return
           }
 
           if (aggregateResult.failed > 0 && aggregateResult.synced === 0) {
-            message.error({
-              content: `同步失败。所有 ${aggregateResult.failed} 个请求都失败了。请稍后再试。`,
-              key: `sync-${accountId}`,
-              duration: 5
-            })
+            toast.error(`同步失败。所有 ${aggregateResult.failed} 个请求都失败了。`)
             return
           }
 
@@ -1236,16 +1225,11 @@ const InsightsDataPage = () => {
               aggregateResult.failed > 0
                 ? `部分同步成功 (成功: ${aggregateResult.synced}, 失败: ${aggregateResult.failed})`
                 : `实体名称同步完成 (成功: ${aggregateResult.synced})`
-
-            message.success({
-              content: successMsg,
-              key: `sync-${accountId}`,
-              duration: 3
-            })
+            toast.success(successMsg)
           }
         } catch (error) {
           console.error('[Entity Sync] Sync failed:', error)
-          message.error({ content: '同步实体名称失败', key: `sync-${accountId}`, duration: 3 })
+          toast.error('同步实体名称失败')
         } finally {
           syncedQueriesRef.current.delete(queryKey)
           updateSyncingEntities(pendingIds, 'remove')
@@ -1585,7 +1569,7 @@ const InsightsDataPage = () => {
         return [...prev, metricKey]
       }
       if (prev.length === 1) {
-        message.warning('至少选择一个指标列')
+        toast.warning('至少选择一个指标列')
         return prev
       }
       return prev.filter(key => key !== metricKey)
@@ -2030,7 +2014,7 @@ const InsightsDataPage = () => {
                           color: 'var(--color-text-muted)'
                         }}
                       >
-                        <Spin size="small" />
+                        <Spinner size="sm" />
                         <span>同步中…</span>
                       </span>
                     ) : (
@@ -2250,9 +2234,7 @@ const InsightsDataPage = () => {
       <Modal
         title="自定义指标列"
         open={isColumnPickerOpen}
-        onCancel={() => setIsColumnPickerOpen(false)}
-        footer={null}
-        destroyOnHidden
+        onClose={() => setIsColumnPickerOpen(false)}
       >
         <div
           className={`${columnModalPrefix}__list`}
@@ -2368,9 +2350,8 @@ const InsightsDataPage = () => {
             : `${idColumnName} 历史数据: ${detailEntityId ?? ''}`
         }
         open={isModalOpen}
-        onCancel={handleModalClose}
+        onClose={handleModalClose}
         width={1100}
-        footer={null}
       >
         {selectedEntityData.length === 0 ? (
           <div style={{ color: 'var(--color-text-muted)' }}>请选择一个实体查看明细数据。</div>

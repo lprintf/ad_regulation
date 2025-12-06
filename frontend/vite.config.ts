@@ -1,9 +1,15 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import path from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   server: {
     port: 5173,
     host: '0.0.0.0'
@@ -17,18 +23,14 @@ export default defineConfig({
           react: ['react', 'react-dom', 'react/jsx-runtime'],
           // React Router
           router: ['react-router-dom'],
-          // Ant Design 核心（不含图标）
-          'antd-core': ['antd'],
-          // Ant Design 图标单独打包
-          'antd-icons': ['@ant-design/icons'],
           // React Query
           query: ['@tanstack/react-query'],
           // 图表库
           charts: ['recharts'],
           // HTTP 客户端
           axios: ['axios'],
-          // 其他工具库
-          utils: ['clsx']
+          // 工具库
+          utils: ['clsx', 'tailwind-merge', 'class-variance-authority']
         },
       },
     },
