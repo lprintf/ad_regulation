@@ -1,13 +1,14 @@
 """
 Service layer implementation for the rule engine domain.
-Provides CRUD, binding management, execution, and scheduler entry points.
+Provides binding management, execution, and scheduler entry points.
+
+Refactored to use Python module-based rules instead of database-stored code.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Any, Optional
 
 from bson import ObjectId
@@ -18,27 +19,21 @@ from api.models.rules import (
     RuleBindingCreate,
     RuleBindingResponse,
     RuleBindingUpdate,
-    RuleDefinitionClone,
-    RuleDefinitionCreate,
-    RuleDefinitionResponse,
-    RuleDefinitionUpdate,
+    RuleConfigClone,
+    RuleConfigCreate,
+    RuleConfigResponse,
+    RuleConfigUpdate,
     RuleExecutionListResponse,
     RuleExecutionLogResponse,
     RuleExecutionRequest,
     RuleExecutionStatus,
-    RuleStatus,
     RuleTrigger,
 )
-from api.services.rule_context_service import RuleContextService
+from rules import get_rule_class, get_rule_metadata, list_rules as registry_list_rules
 from utils.db import (
     RuleBindingDocument,
-    RuleDefinitionDocument,
+    RuleConfigDocument,
     RuleExecutionLogDocument,
-)
-from utils.rule_sandbox import (
-    RuleExecutionError,
-    RuleValidationError,
-    execute_rule_script,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,34 +45,19 @@ def _to_object_id(identifier: str) -> ObjectId:
     return ObjectId(identifier)
 
 
-def _serialize_rule_definition(doc: RuleDefinitionDocument) -> RuleDefinitionResponse:
-    return RuleDefinitionResponse(
-        id=str(doc.id),
-        name=doc.name,
-        description=doc.description,
-        version=doc.version,
-        code=doc.code,
-        parameters_schema=doc.parameters_schema,
-        tags=doc.tags,
-        status=RuleStatus(doc.status),
-        is_active=doc.is_active,
-        created_by=doc.created_by,
-        updated_by=doc.updated_by,
-        created_at=doc.created_at,
-        updated_at=doc.updated_at,
-        published_at=doc.published_at,
-    )
-
-
 def _serialize_binding(doc: RuleBindingDocument) -> RuleBindingResponse:
     return RuleBindingResponse(
         id=str(doc.id),
         rule_id=doc.rule_id,
         rule_name=doc.rule_name,
+        rule_config_id=doc.rule_config_id,
         entity_type=BindingEntityType(doc.entity_type),
         entity_id=doc.entity_id,
+        ad_account_id=doc.ad_account_id,
+        campaign_id=doc.campaign_id,
+        adset_id=doc.adset_id,
+        ad_id=doc.ad_id,
         source=BindingSource(doc.source),
-        metadata=doc.metadata,
         is_active=doc.is_active,
         created_at=doc.created_at,
         updated_at=doc.updated_at,
@@ -91,7 +71,6 @@ def _serialize_execution(doc: RuleExecutionLogDocument) -> RuleExecutionLogRespo
         try:
             binding_id = str(doc.binding.id)  # type: ignore[attr-defined]
         except AttributeError:
-            # Fallback when lazy link not fetched yet
             binding_id = str(doc.binding)  # type: ignore
 
     return RuleExecutionLogResponse(
@@ -117,151 +96,236 @@ def _serialize_execution(doc: RuleExecutionLogDocument) -> RuleExecutionLogRespo
     )
 
 
+def _merge_parameters_schema(
+    base_schema: dict[str, Any],
+    overrides: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge base parameters_schema with overrides (update default values)."""
+    merged = {}
+    for key, param in base_schema.items():
+        merged[key] = dict(param)  # Copy base param
+        if key in overrides:
+            merged[key]["default"] = overrides[key]
+    return merged
+
+
+def _serialize_config(doc: RuleConfigDocument) -> RuleConfigResponse:
+    """Serialize RuleConfigDocument to response model."""
+    # Get base rule's parameters_schema
+    base_meta = get_rule_metadata(doc.base_rule)
+    base_schema = base_meta.get("parameters_schema", {}) if base_meta else {}
+
+    # Merge with overrides
+    merged_schema = _merge_parameters_schema(base_schema, doc.parameter_overrides)
+
+    return RuleConfigResponse(
+        id=str(doc.id),
+        name=doc.name,
+        base_rule=doc.base_rule,
+        description=doc.description,
+        version=doc.version,
+        parameter_overrides=doc.parameter_overrides,
+        parameters_schema=merged_schema,
+        tags=doc.tags,
+        is_active=doc.is_active,
+        created_by=doc.created_by,
+        updated_by=doc.updated_by,
+        created_at=doc.created_at,
+        updated_at=doc.updated_at,
+    )
+
+
+def _increment_version(version: str) -> str:
+    """Increment the patch version number. e.g., '1.0.0' -> '1.0.1'"""
+    try:
+        parts = version.split(".")
+        if len(parts) == 3:
+            parts[2] = str(int(parts[2]) + 1)
+            return ".".join(parts)
+    except (ValueError, IndexError):
+        pass
+    return version + ".1"
+
+
 class RuleEngineService:
     """Service layer for rule engine functionality."""
 
+    # ===== Rule Discovery (from Registry) =====
+
     @staticmethod
-    async def create_rule(data: RuleDefinitionCreate) -> RuleDefinitionResponse:
-        existing = await RuleDefinitionDocument.find_one(
-            RuleDefinitionDocument.name == data.name
+    def list_available_rules() -> list[dict]:
+        """List all available rules from the registry."""
+        return registry_list_rules()
+
+    @staticmethod
+    def get_rule_info(rule_name: str) -> dict | None:
+        """Get metadata for a specific rule."""
+        return get_rule_metadata(rule_name)
+
+    # ===== Rule Config Management (Clone with modified parameters) =====
+
+    @staticmethod
+    async def create_config(data: RuleConfigCreate) -> RuleConfigResponse:
+        """Create a new rule configuration (clone rule with modified parameters)."""
+        # Validate base rule exists
+        base_meta = get_rule_metadata(data.base_rule)
+        if base_meta is None:
+            raise ValueError(f"Base rule '{data.base_rule}' not found in registry")
+
+        # Check name uniqueness
+        existing = await RuleConfigDocument.find_one(
+            RuleConfigDocument.name == data.name
         )
         if existing:
-            raise ValueError(f"Rule name '{data.name}' already exists")
+            raise ValueError(f"Config name '{data.name}' already exists")
+
+        # Validate parameter_overrides keys exist in base schema
+        base_schema = base_meta.get("parameters_schema", {})
+        for key in data.parameter_overrides.keys():
+            if key not in base_schema:
+                logger.warning(f"Parameter override key '{key}' not in base schema, skipping validation")
 
         now = datetime.utcnow()
-        rule_doc = RuleDefinitionDocument(
+        config = RuleConfigDocument(
             name=data.name,
+            base_rule=data.base_rule,
             description=data.description,
-            code=data.code,
-            parameters_schema=data.parameters_schema,
+            version="1.0.0",
+            parameter_overrides=data.parameter_overrides,
             tags=data.tags,
             created_by=data.created_by,
             updated_by=data.created_by,
             created_at=now,
             updated_at=now,
         )
-        await rule_doc.insert()
-        logger.info("Created rule definition '%s'", rule_doc.name)
-        return _serialize_rule_definition(rule_doc)
+        await config.insert()
+        logger.info("Created rule config '%s' based on '%s'", config.name, config.base_rule)
+        return _serialize_config(config)
 
     @staticmethod
-    async def list_rules(status: RuleStatus | None = None) -> list[RuleDefinitionResponse]:
-        query = {}
-        if status:
-            query["status"] = status.value
-        docs = await RuleDefinitionDocument.find(query).to_list()
-        return [_serialize_rule_definition(doc) for doc in docs]
+    async def list_configs(base_rule: str | None = None) -> list[RuleConfigResponse]:
+        """List rule configurations, optionally filtered by base rule."""
+        filters = []
+        if base_rule:
+            filters.append(RuleConfigDocument.base_rule == base_rule)
+
+        cursor = RuleConfigDocument.find(*filters) if filters else RuleConfigDocument.find({})
+        docs = await cursor.to_list()
+        return [_serialize_config(doc) for doc in docs]
 
     @staticmethod
-    async def get_rule(rule_id: str) -> RuleDefinitionResponse:
-        doc = await RuleDefinitionDocument.get(_to_object_id(rule_id))
+    async def get_config(config_id: str) -> RuleConfigResponse:
+        """Get a specific rule configuration."""
+        doc = await RuleConfigDocument.get(_to_object_id(config_id))
         if doc is None:
-            raise ValueError("Rule not found")
-        return _serialize_rule_definition(doc)
+            raise ValueError("Config not found")
+        return _serialize_config(doc)
 
     @staticmethod
-    async def update_rule(rule_id: str, data: RuleDefinitionUpdate) -> RuleDefinitionResponse:
-        doc = await RuleDefinitionDocument.get(_to_object_id(rule_id))
+    async def get_config_by_name(name: str) -> RuleConfigResponse:
+        """Get a rule configuration by name."""
+        doc = await RuleConfigDocument.find_one(RuleConfigDocument.name == name)
         if doc is None:
-            raise ValueError("Rule not found")
+            raise ValueError(f"Config '{name}' not found")
+        return _serialize_config(doc)
+
+    @staticmethod
+    async def update_config(config_id: str, data: RuleConfigUpdate) -> RuleConfigResponse:
+        """Update a rule configuration."""
+        doc = await RuleConfigDocument.get(_to_object_id(config_id))
+        if doc is None:
+            raise ValueError("Config not found")
 
         updated = False
         if data.description is not None:
             doc.description = data.description
             updated = True
-        if data.code is not None:
-            doc.code = data.code
-            updated = True
-        if data.parameters_schema is not None:
-            doc.parameters_schema = data.parameters_schema
+        if data.parameter_overrides is not None:
+            doc.parameter_overrides = data.parameter_overrides
+            doc.version = _increment_version(doc.version)  # Auto-increment version
             updated = True
         if data.tags is not None:
             doc.tags = data.tags
             updated = True
-        if data.status is not None:
-            doc.status = data.status.value
-            updated = True
         if data.is_active is not None:
             doc.is_active = data.is_active
             updated = True
-        if data.version is not None:
-            doc.version = data.version
-            updated = True
         if data.updated_by is not None:
             doc.updated_by = data.updated_by
-            updated = True
 
         if updated:
             doc.updated_at = datetime.utcnow()
-            if doc.status == RuleStatus.PUBLISHED.value and not doc.published_at:
-                doc.published_at = doc.updated_at
             await doc.save()
-            logger.info("Updated rule definition '%s'", doc.name)
+            logger.info("Updated rule config '%s' (v%s)", doc.name, doc.version)
 
-        return _serialize_rule_definition(doc)
+        return _serialize_config(doc)
 
     @staticmethod
-    async def clone_rule(rule_id: str, data: RuleDefinitionClone) -> RuleDefinitionResponse:
-        """Clone an existing rule with modified parameters and version."""
-        # Get original rule
-        original = await RuleDefinitionDocument.get(_to_object_id(rule_id))
+    async def clone_config(config_id: str, data: RuleConfigClone) -> RuleConfigResponse:
+        """Clone an existing config with new name and additional overrides."""
+        original = await RuleConfigDocument.get(_to_object_id(config_id))
         if original is None:
-            raise ValueError("Rule not found")
+            raise ValueError("Config not found")
 
-        # Check new name doesn't exist
-        existing = await RuleDefinitionDocument.find_one(
-            RuleDefinitionDocument.name == data.new_name
+        # Check new name uniqueness
+        existing = await RuleConfigDocument.find_one(
+            RuleConfigDocument.name == data.new_name
         )
         if existing:
-            raise ValueError(f"Rule name '{data.new_name}' already exists")
+            raise ValueError(f"Config name '{data.new_name}' already exists")
 
-        # Clone parameters_schema and apply overrides
-        cloned_schema = dict(original.parameters_schema)
-        for param_key, override_value in data.parameter_overrides.items():
-            if param_key in cloned_schema:
-                # Update only the default value in the parameter schema
-                cloned_schema[param_key]["default"] = override_value
-            else:
-                logger.warning(
-                    "Parameter override key '%s' not found in original schema, skipping",
-                    param_key
-                )
+        # Merge parameter overrides
+        merged_overrides = dict(original.parameter_overrides)
+        merged_overrides.update(data.parameter_overrides)
 
-        # Create new rule document
         now = datetime.utcnow()
-        cloned_rule = RuleDefinitionDocument(
+        cloned = RuleConfigDocument(
             name=data.new_name,
-            description=data.description if data.description else original.description,
-            version=data.new_version,
-            code=original.code,  # Keep original code
-            parameters_schema=cloned_schema,
+            base_rule=original.base_rule,
+            description=data.description or original.description,
+            version="1.0.0",  # Reset version for clone
+            parameter_overrides=merged_overrides,
             tags=original.tags,
-            status=RuleStatus.DRAFT.value,  # Always start as draft
-            is_active=False,
             created_by=data.created_by,
             updated_by=data.created_by,
             created_at=now,
             updated_at=now,
         )
-        await cloned_rule.insert()
-        logger.info(
-            "Cloned rule '%s' to '%s' (version %s)",
-            original.name,
-            cloned_rule.name,
-            cloned_rule.version
-        )
-        return _serialize_rule_definition(cloned_rule)
+        await cloned.insert()
+        logger.info("Cloned config '%s' to '%s'", original.name, cloned.name)
+        return _serialize_config(cloned)
+
+    @staticmethod
+    async def delete_config(config_id: str) -> None:
+        """Delete a rule configuration."""
+        doc = await RuleConfigDocument.get(_to_object_id(config_id))
+        if doc is None:
+            return
+        await doc.delete()
+        logger.info("Deleted rule config '%s'", doc.name)
 
     # ===== Binding management =====
 
     @staticmethod
     async def create_binding(data: RuleBindingCreate) -> RuleBindingResponse:
-        rule = await RuleDefinitionDocument.get(_to_object_id(data.rule_id))
-        if rule is None:
-            raise ValueError("Rule not found for binding")
+        """Create a binding between a rule and an entity."""
+        # Validate rule exists in registry
+        rule_meta = get_rule_metadata(data.rule_id)  # rule_id is now rule_name
+        if rule_meta is None:
+            raise ValueError(f"Rule '{data.rule_id}' not found in registry")
+
+        rule_name = rule_meta["name"]
+
+        # Validate rule_config_id if provided
+        if data.rule_config_id:
+            config = await RuleConfigDocument.get(_to_object_id(data.rule_config_id))
+            if config is None:
+                raise ValueError(f"Rule config '{data.rule_config_id}' not found")
+            if config.base_rule != rule_name:
+                raise ValueError(f"Config '{config.name}' is for rule '{config.base_rule}', not '{rule_name}'")
 
         existing = await RuleBindingDocument.find_one(
-            RuleBindingDocument.rule_name == rule.name,
+            RuleBindingDocument.rule_name == rule_name,
             RuleBindingDocument.entity_id == data.entity_id,
         )
         if existing:
@@ -269,32 +333,75 @@ class RuleEngineService:
 
         now = datetime.utcnow()
         binding = RuleBindingDocument(
-            rule=rule,
-            rule_id=str(rule.id),
-            rule_name=rule.name,
+            rule_id=rule_name,  # Store rule name as rule_id for compatibility
+            rule_name=rule_name,
+            rule_config_id=data.rule_config_id,
             entity_type=data.entity_type.value,
             entity_id=data.entity_id,
+            ad_account_id=data.ad_account_id,
+            campaign_id=data.campaign_id,
+            adset_id=data.adset_id,
+            ad_id=data.ad_id,
             source=data.source.value,
-            metadata=data.metadata,
             created_at=now,
             updated_at=now,
         )
         await binding.insert()
-        logger.info("Created binding %s for rule '%s'", binding.id, rule.name)
+        logger.info("Created binding %s for rule '%s' on entity %s", binding.id, rule_name, data.entity_id)
+        return _serialize_binding(binding)
+
+    @staticmethod
+    async def create_binding_by_name(
+        rule_name: str,
+        entity_type: str,
+        entity_id: str,
+        ad_account_id: str,
+        campaign_id: str | None = None,
+        adset_id: str | None = None,
+        ad_id: str | None = None,
+        rule_config_id: str | None = None,
+        source: str = "manual",
+    ) -> RuleBindingResponse:
+        """Create a binding using rule name directly."""
+        rule_meta = get_rule_metadata(rule_name)
+        if rule_meta is None:
+            raise ValueError(f"Rule '{rule_name}' not found in registry")
+
+        existing = await RuleBindingDocument.find_one(
+            RuleBindingDocument.rule_name == rule_name,
+            RuleBindingDocument.entity_id == entity_id,
+        )
+        if existing:
+            raise ValueError("Binding already exists for this rule and entity")
+
+        now = datetime.utcnow()
+        binding = RuleBindingDocument(
+            rule_id=rule_name,
+            rule_name=rule_name,
+            rule_config_id=rule_config_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            ad_account_id=ad_account_id,
+            campaign_id=campaign_id,
+            adset_id=adset_id,
+            ad_id=ad_id,
+            source=source,
+            created_at=now,
+            updated_at=now,
+        )
+        await binding.insert()
+        logger.info("Created binding %s for rule '%s'", binding.id, rule_name)
         return _serialize_binding(binding)
 
     @staticmethod
     async def list_bindings(
-        rule_id: str | None = None,
+        rule_name: str | None = None,
         entity_id: str | None = None,
         active_only: bool = False,
     ) -> list[RuleBindingResponse]:
         filters: list[Any] = []
-        if rule_id:
-            rule = await RuleDefinitionDocument.get(_to_object_id(rule_id))
-            if rule is None:
-                raise ValueError("Rule not found")
-            filters.append(RuleBindingDocument.rule_id == str(rule.id))
+        if rule_name:
+            filters.append(RuleBindingDocument.rule_name == rule_name)
         if entity_id:
             filters.append(RuleBindingDocument.entity_id == entity_id)
         if active_only:
@@ -315,8 +422,15 @@ class RuleEngineService:
         if binding is None:
             raise ValueError("Binding not found")
 
-        if data.metadata is not None:
-            binding.metadata = data.metadata
+        if data.rule_config_id is not None:
+            # Validate config exists and matches the rule
+            if data.rule_config_id:  # Non-empty string
+                config = await RuleConfigDocument.get(_to_object_id(data.rule_config_id))
+                if config is None:
+                    raise ValueError(f"Rule config '{data.rule_config_id}' not found")
+                if config.base_rule != binding.rule_name:
+                    raise ValueError(f"Config '{config.name}' is for rule '{config.base_rule}', not '{binding.rule_name}'")
+            binding.rule_config_id = data.rule_config_id if data.rule_config_id else None
         if data.is_active is not None:
             binding.is_active = data.is_active
         binding.updated_at = datetime.utcnow()
@@ -339,87 +453,74 @@ class RuleEngineService:
         request: RuleExecutionRequest,
         scheduled_run_time: datetime | None = None,
     ) -> RuleExecutionLogResponse:
+        """
+        Execute a rule using the new registry-based system.
+
+        The rule class is loaded from the registry, instantiated with binding and params,
+        and executed directly (no sandbox).
+        """
+        binding: RuleBindingDocument | None = None
+        rule_name: str
+
         if request.binding_id:
-            binding = await RuleBindingDocument.get(
-                _to_object_id(request.binding_id), fetch_links=True
-            )
+            binding = await RuleBindingDocument.get(_to_object_id(request.binding_id))
             if binding is None:
                 raise ValueError("Binding not found")
-            rule = None
-            try:
-                rule = await binding.fetch_link(RuleBindingDocument.rule)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning(
-                    "Failed to fetch linked rule for binding %s: %s",
-                    request.binding_id,
-                    exc,
-                )
-
-            if rule is None and binding.rule_id:
-                try:
-                    rule = await RuleDefinitionDocument.get(
-                        _to_object_id(binding.rule_id)
-                    )
-                except ValueError:
-                    logger.warning(
-                        "Stored rule_id '%s' on binding %s is not a valid ObjectId",
-                        binding.rule_id,
-                        request.binding_id,
-                    )
-
-            if rule is None:
-                rule = await RuleDefinitionDocument.find_one(
-                    RuleDefinitionDocument.name == binding.rule_name
-                )
-
-            if rule is None:
-                raise ValueError(
-                    f"Rule definition not found for binding {request.binding_id}"
-                )
+            rule_name = binding.rule_name
         elif request.rule_id:
-            rule = await RuleDefinitionDocument.get(_to_object_id(request.rule_id))
-            if rule is None:
-                raise ValueError("Rule not found")
-            binding = None
+            # rule_id is now interpreted as rule_name
+            rule_name = request.rule_id
         else:
             raise ValueError("Either rule_id or binding_id must be provided")
 
-        if request.context is not None:
-            context = request.context
-        else:
-            try:
-                context = await RuleContextService.build_context(binding, request.params)
-            except Exception as exc:
-                logger.warning(
-                    "Failed to build context for rule '%s': %s",
-                    rule.name,
-                    exc,
-                )
-                context = RuleEngineService._build_default_context(binding)
-                context["context_error"] = str(exc)
-        params = request.params or {}
+        # Get rule class from registry
+        try:
+            rule_class = get_rule_class(rule_name)
+        except ValueError as exc:
+            raise ValueError(f"Rule not found: {exc}") from exc
+
+        # Merge params: rule config overrides + request params
+        params = {}
+        if binding and binding.rule_config_id:
+            # Load parameter overrides from rule config
+            config = await RuleConfigDocument.get(_to_object_id(binding.rule_config_id))
+            if config and config.parameter_overrides:
+                params.update(config.parameter_overrides)
+        if request.params:
+            params.update(request.params)
+
+        # Instantiate and execute rule
+        rule_instance = rule_class(binding=binding, params=params)
 
         start_time = datetime.utcnow()
-
-        try:
-            execution_result = execute_rule_script(rule.code, context, params)
-            status = RuleExecutionStatus.SUCCESS
-            error_message = None
-        except (RuleValidationError, RuleExecutionError) as exc:
-            execution_result = {}
-            status = RuleExecutionStatus.FAILED
-            error_message = str(exc)
-            logger.warning(
-                "Rule '%s' execution failed: %s", rule.name, error_message, exc_info=True
-            )
-
+        result = await rule_instance.execute()
         completed_at = datetime.utcnow()
         duration_ms = int((completed_at - start_time).total_seconds() * 1000)
 
+        # Determine status
+        if result.decision == "error":
+            status = RuleExecutionStatus.FAILED
+            error_message = "; ".join(result.reasons) if result.reasons else "Unknown error"
+        else:
+            status = RuleExecutionStatus.SUCCESS
+            error_message = None
+
+        # Build context snapshot for logging
+        context_snapshot = {
+            "params": params,
+            "decision": result.decision,
+        }
+        if binding:
+            context_snapshot["entity_type"] = binding.entity_type
+            context_snapshot["entity_id"] = binding.entity_id
+            context_snapshot["ad_account_id"] = binding.ad_account_id
+            context_snapshot["rule_config_id"] = binding.rule_config_id
+
+        # Save execution log
         log_doc = RuleExecutionLogDocument(
-            rule_name=rule.name,
-            rule_id=str(rule.id),
-            rule_version=rule.version,
+            rule_name=rule_name,
+            rule_id=rule_name,
+            rule_version=rule_class.version,
             binding=binding,
             entity_type=binding.entity_type if binding else None,
             entity_id=binding.entity_id if binding else None,
@@ -428,16 +529,17 @@ class RuleEngineService:
             actual_start_time=start_time,
             completed_at=completed_at,
             status=status.value,
-            actions=execution_result.get("actions", []),
-            reasons=execution_result.get("reasons", []),
-            metrics=execution_result.get("metrics", {}),
-            context_snapshot=context,
+            actions=result.actions,
+            reasons=result.reasons,
+            metrics=result.metrics,
+            context_snapshot=context_snapshot,
             error_message=error_message,
             execution_duration_ms=duration_ms,
-            execution_logs=execution_result.get("execution_logs", []),
+            execution_logs=result.logs,
         )
         await log_doc.insert()
 
+        # Update binding last_executed_at
         if binding and status == RuleExecutionStatus.SUCCESS:
             binding.last_executed_at = completed_at
             binding.updated_at = completed_at
@@ -463,19 +565,13 @@ class RuleEngineService:
         binding_id: str, limit: int = 50
     ) -> RuleExecutionListResponse:
         """List execution history for a specific binding."""
-        from bson import ObjectId
         from bson.dbref import DBRef
 
         binding_obj_id = _to_object_id(binding_id)
-
-        # Create DBRef for the binding (Links are stored as DBRefs in MongoDB)
         binding_ref = DBRef(collection="rule_bindings", id=binding_obj_id)
 
-        # Query executions using raw MongoDB query (since Link comparison doesn't work)
         docs = (
-            await RuleExecutionLogDocument.find(
-                {"binding": binding_ref}
-            )
+            await RuleExecutionLogDocument.find({"binding": binding_ref})
             .sort(-RuleExecutionLogDocument.actual_start_time)
             .limit(limit)
             .to_list()
@@ -491,6 +587,7 @@ class RuleEngineService:
         scheduled_run_time: datetime | None = None,
         limit: Optional[int] = None,
     ) -> None:
+        """Run all active bindings."""
         bindings = await RuleBindingDocument.find(
             RuleBindingDocument.is_active == True  # noqa: E712
         ).to_list()
@@ -509,7 +606,7 @@ class RuleEngineService:
                     scheduled_run_time=scheduled_run_time,
                 )
                 processed += 1
-            except Exception as exc:  # pragma: no cover - defensive
+            except Exception as exc:
                 logger.exception(
                     "Scheduled evaluation failed for binding %s: %s",
                     binding.id,
@@ -567,10 +664,7 @@ class RuleEngineService:
 
     @staticmethod
     async def scan_new_ad_bindings(ad_accounts: list[str] | None = None) -> None:
-        """
-        Placeholder for ad naming parser integration.
-        Currently logs execution to create observable heartbeat in execution history.
-        """
+        """Placeholder for ad naming parser integration."""
         now = datetime.utcnow()
         accounts_payload = (
             [account for account in ad_accounts if account]
@@ -603,70 +697,3 @@ class RuleEngineService:
             now.isoformat(),
             accounts_payload or "all",
         )
-
-    @staticmethod
-    async def ensure_demo_rule_seed() -> None:
-        """
-        Ensure the demo spend guard rule definition exists.
-        Extracts PARAMETERS_SCHEMA from the rule script file.
-        """
-        rule_name = "demo_spend_guard"
-        existing = await RuleDefinitionDocument.find_one(
-            RuleDefinitionDocument.name == rule_name
-        )
-        if existing:
-            return
-
-        script_path = Path("rules/scripts/demo_spend_guard.py")
-        try:
-            code = script_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            logger.warning("Demo rule script not found at %s", script_path)
-            return
-
-        # Extract PARAMETERS_SCHEMA from the script
-        parameters_schema = {}
-        try:
-            # Execute the script to extract PARAMETERS_SCHEMA
-            namespace = {}
-            exec(code, namespace)
-            if "PARAMETERS_SCHEMA" in namespace:
-                parameters_schema = namespace["PARAMETERS_SCHEMA"]
-            else:
-                logger.warning("PARAMETERS_SCHEMA not found in %s, using empty schema", script_path)
-        except Exception as e:
-            logger.error("Failed to extract PARAMETERS_SCHEMA from %s: %s", script_path, e)
-
-        now = datetime.utcnow()
-        doc = RuleDefinitionDocument(
-            name=rule_name,
-            description="素材测试规则：花费≥3美金时评估CPC/CTR，未达标建议暂停（仅输出建议，不直接调控）",
-            code=code,
-            parameters_schema=parameters_schema,
-            tags=["demo", "spend_guard", "creative"],
-            status=RuleStatus.PUBLISHED.value,
-            is_active=True,
-            version="1.0.0",
-            created_by="system",
-            updated_by="system",
-            created_at=now,
-            updated_at=now,
-            published_at=now,
-        )
-        await doc.insert()
-        logger.info("Seeded demo rule '%s' from %s with %d parameters",
-                    rule_name, script_path, len(parameters_schema))
-
-    # ===== Helpers =====
-
-    @staticmethod
-    def _build_default_context(binding: RuleBindingDocument | None) -> dict[str, Any]:
-        if binding is None:
-            return {}
-        return {
-            "entity_type": binding.entity_type,
-            "entity_id": binding.entity_id,
-            "rule_name": binding.rule_name,
-            "rule_id": binding.rule_id,
-            "metadata": binding.metadata,
-        }

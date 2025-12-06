@@ -3,14 +3,17 @@ import { Modal, message, Spin } from 'antd'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { RuleEntityType } from '../../types/rule-engine'
 import { createRuleBinding } from '../../api/ruleEngine'
-import { mergeBindingMetadata, stripReservedMetadata } from '../rule-bindings/utils'
 import { useEntityRuleBindings, usePublishedRules } from '../rule-bindings/hooks'
 
 export interface RuleBindingTarget {
   entityId: string
   entityName: string | null
   entityType: RuleEntityType
-  accountId: string | null
+  // Ad hierarchy - for proper indexing
+  adAccountId: string
+  campaignId?: string | null
+  adsetId?: string | null
+  adId?: string | null
 }
 
 interface RuleBindingModalProps {
@@ -31,18 +34,10 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
   const existingBindings = useMemo(() => bindingsResponse?.items ?? [], [bindingsResponse])
 
   const [selectedRuleId, setSelectedRuleId] = useState('')
-  const [metadata, setMetadata] = useState('')
-  const [metadataError, setMetadataError] = useState('')
-  const [notes, setNotes] = useState('')
 
   useEffect(() => {
-    if (open) {
-      setMetadataError('')
-      setNotes('')
-      setMetadata('')
-      if (rules.length > 0) {
-        setSelectedRuleId(rules[0].id)
-      }
+    if (open && rules.length > 0) {
+      setSelectedRuleId(rules[0].id)
     }
   }, [open, rules])
 
@@ -52,11 +47,6 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
     }
     const latestBinding = existingBindings[0]
     setSelectedRuleId(prev => prev || latestBinding.ruleId)
-    if (latestBinding.metadata) {
-      const editableMetadata = stripReservedMetadata(latestBinding.metadata)
-      setMetadata(editableMetadata ? JSON.stringify(editableMetadata, null, 2) : '')
-      setNotes(typeof latestBinding.metadata.notes === 'string' ? latestBinding.metadata.notes : '')
-    }
   }, [existingBindings, open])
 
   const createBindingMutation = useMutation({
@@ -78,35 +68,15 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
     if (!target || !selectedRuleId) {
       return
     }
-    setMetadataError('')
-
-    let parsedMetadata: Record<string, unknown> | undefined
-    if (metadata.trim()) {
-      try {
-        const parsed = JSON.parse(metadata)
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          parsedMetadata = parsed as Record<string, unknown>
-        } else {
-          setMetadataError('元数据需要是 JSON 对象')
-          return
-        }
-      } catch {
-        setMetadataError('元数据不是合法 JSON')
-        return
-      }
-    }
-
-    const mergedMetadata = mergeBindingMetadata(
-      parsedMetadata,
-      target.accountId ?? undefined,
-      notes.trim() || undefined
-    )
 
     createBindingMutation.mutate({
       ruleId: selectedRuleId,
-      entityId: target.entityId,
       entityType: target.entityType,
-      metadata: mergedMetadata,
+      entityId: target.entityId,
+      adAccountId: target.adAccountId,
+      campaignId: target.campaignId,
+      adsetId: target.adsetId,
+      adId: target.adId,
       source: 'manual'
     })
   }
@@ -137,7 +107,7 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
           <section>
             <div style={{ fontWeight: 600, marginBottom: '0.25rem' }}>{titleEntity}</div>
             <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
-              类型：{target.entityType} · 所属账号：{target.accountId ?? '未知'}
+              类型：{target.entityType} · 所属账号：{target.adAccountId}
             </div>
           </section>
 
@@ -168,32 +138,8 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
                 </select>
               </label>
 
-              <label className="form-label">
-                <span>元数据 JSON（可选）</span>
-                <textarea
-                  className="textarea"
-                  rows={4}
-                  placeholder='{"guard": true}'
-                  value={metadata}
-                  onChange={event => setMetadata(event.target.value)}
-                />
-                {metadataError && (
-                  <div style={{ color: 'var(--color-danger)' }}>{metadataError}</div>
-                )}
-              </label>
-
-              <label className="form-label">
-                <span>备注（可选）</span>
-                <input
-                  className="input"
-                  value={notes}
-                  onChange={event => setNotes(event.target.value)}
-                  placeholder="绑定原因、使用场景等"
-                />
-              </label>
-
               <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-                绑定创建后默认启用，可在规则绑定页面停用或编辑。
+                绑定创建后默认启用，可在规则绑定页面停用。如需自定义参数，请先在规则管理页面创建规则配置。
               </div>
             </>
           )}
@@ -225,7 +171,7 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
                       <div style={{ fontWeight: 600 }}>{binding.ruleName}</div>
                       <div style={{ color: 'var(--color-text-muted)' }}>
                         {binding.active ? '启用' : '停用'} · 更新于{' '}
-                        {binding.updatedAt ? new Date(binding.updatedAt).toLocaleString() : '--'}
+                        {binding.updated_at ? new Date(binding.updated_at).toLocaleString() : '--'}
                       </div>
                     </div>
                   </div>

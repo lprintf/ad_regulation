@@ -106,25 +106,41 @@ class RuleDefinitionResponse(RuleDefinitionBase):
 
 
 class RuleBindingBase(BaseModel):
-    rule_id: str = Field(..., description="Rule definition id")
-    rule_name: str = Field(..., description="Rule definition name")
+    rule_id: str = Field(..., description="Rule name (registry key)")
+    rule_name: str = Field(..., description="Rule display name")
+    rule_config_id: str | None = Field(default=None, description="Optional config ID for parameter overrides")
     entity_type: BindingEntityType
     entity_id: str = Field(..., description="ID of the target object")
+
+    # Ad hierarchy for indexing
+    ad_account_id: str = Field(..., description="Ad account ID (required)")
+    campaign_id: str | None = Field(default=None, description="Campaign ID")
+    adset_id: str | None = Field(default=None, description="AdSet ID")
+    ad_id: str | None = Field(default=None, description="Ad ID")
+
     source: BindingSource = Field(default=BindingSource.MANUAL)
-    metadata: dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
 
 
 class RuleBindingCreate(BaseModel):
-    rule_id: str
+    """Create a rule binding with full ad hierarchy for indexing."""
+    rule_id: str = Field(..., description="Rule name from registry")
+    rule_config_id: str | None = Field(default=None, description="Optional config ID for custom parameters")
     entity_type: BindingEntityType
     entity_id: str
+
+    # Ad hierarchy fields - required for proper indexing
+    ad_account_id: str = Field(..., description="Ad account ID (always required)")
+    campaign_id: str | None = Field(default=None, description="Campaign ID (required if entity_type >= campaign)")
+    adset_id: str | None = Field(default=None, description="AdSet ID (required if entity_type >= adset)")
+    ad_id: str | None = Field(default=None, description="Ad ID (required if entity_type = ad)")
+
     source: BindingSource = BindingSource.MANUAL
-    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class RuleBindingUpdate(BaseModel):
-    metadata: dict[str, Any] | None = None
+    """Update binding - only allow toggling active status and config."""
+    rule_config_id: str | None = None
     is_active: bool | None = None
 
 
@@ -182,3 +198,56 @@ class RuleExecutionListResponse(BaseModel):
     executions: list[RuleExecutionLogResponse]
     total: int
 
+
+# ===== Rule Config Models (for cloning rules with modified parameters) =====
+
+
+class RuleConfigCreate(BaseModel):
+    """Create a new rule configuration (clone with modified parameters)"""
+    name: str = Field(..., description="Unique config name, e.g. 'ml_auto_stop_conservative'")
+    base_rule: str = Field(..., description="Base rule name from registry")
+    description: str | None = None
+    parameter_overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Override default values in parameters_schema"
+    )
+    tags: list[str] = Field(default_factory=list)
+    created_by: str | None = None
+
+
+class RuleConfigUpdate(BaseModel):
+    """Update an existing rule configuration"""
+    description: str | None = None
+    parameter_overrides: dict[str, Any] | None = None
+    tags: list[str] | None = None
+    is_active: bool | None = None
+    updated_by: str | None = None
+
+
+class RuleConfigResponse(BaseModel):
+    """Rule configuration response"""
+    id: str
+    name: str
+    base_rule: str
+    description: str | None = None
+    version: str
+    parameter_overrides: dict[str, Any] = Field(default_factory=dict)
+    # Merged parameters_schema (base + overrides)
+    parameters_schema: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    is_active: bool = True
+    created_by: str | None = None
+    updated_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RuleConfigClone(BaseModel):
+    """Clone an existing rule config with new parameters"""
+    new_name: str = Field(..., description="Name for the cloned config")
+    parameter_overrides: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional parameter overrides (merged with source)"
+    )
+    description: str | None = None
+    created_by: str | None = None

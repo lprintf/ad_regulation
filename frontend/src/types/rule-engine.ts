@@ -44,13 +44,18 @@ export interface RuleBinding {
   id: string
   ruleId: string
   ruleName: string
+  ruleConfigId?: string | null
   entityType: RuleEntityType
   entityId: string
+
+  // Ad hierarchy for indexing
+  adAccountId: string
+  campaignId?: string | null
+  adsetId?: string | null
+  adId?: string | null
+
   source: BindingSource
-  metadata: Record<string, unknown>
   active: boolean
-  accountId?: string
-  notes?: string
   created_at: string
   updated_at: string
   lastExecutedAt?: string

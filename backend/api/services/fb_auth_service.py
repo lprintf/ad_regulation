@@ -118,10 +118,14 @@ def _fetch_token_info_and_accounts(seed_info: FbAppSeedInfo) -> _TokenSyncPayloa
                 "type": exc.api_error_type(),
             },
         ) from exc
-
+    print
     token_type: str | None = token_info.get("type")
     user_id = token_info.get("user_id")
     if not user_id:
+        print(
+            "[WARNING] Failed to retrieve user ID from Facebook token",
+            token_info,
+        )
         raise FacebookAuthError(
             "debug_token response does not contain user_id",
             code="DEBUG_TOKEN_NO_USER",

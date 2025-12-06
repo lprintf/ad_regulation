@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import {
-  fetchRuleDefinitions,
+  fetchAvailableRules,
   fetchRuleBindings
 } from '../../api/ruleEngine'
 import type {
@@ -10,12 +10,12 @@ import type {
 
 export const usePublishedRules = () => {
   const query = useQuery({
-    queryKey: ['rule-definitions', 'published'],
-    queryFn: () => fetchRuleDefinitions({ status: 'published' }),
+    queryKey: ['available-rules'],
+    queryFn: fetchAvailableRules,
     staleTime: 60 * 1000
   })
 
-  const rules: RuleDefinition[] = query.data?.items ?? []
+  const rules: RuleDefinition[] = query.data ?? []
   return {
     ...query,
     rules

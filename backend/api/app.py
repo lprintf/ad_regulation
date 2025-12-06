@@ -23,8 +23,8 @@ from api.routers import (
     scheduler,
     user,
 )
-from api.services.rule_engine_service import RuleEngineService
 from api.services.rule_scheduler import start_rule_scheduler, stop_rule_scheduler
+from rules import init_rules
 from api.services.insights_sync_scheduler import (
     start_insights_sync_scheduler,
     stop_insights_sync_scheduler,
@@ -68,9 +68,9 @@ async def lifespan(app: FastAPI):
         await start_leader_election()
         print("✓ Leader election started")
 
-        # 启动调度器（所有实例都启动，但只有 Leader 执行）
-        await RuleEngineService.ensure_demo_rule_seed()
-        print("✓ Demo rule seeded (if missing)")
+        # 初始化规则系统（发现并注册所有内置规则）
+        init_rules()
+        print("✓ Rules initialized from registry")
         await start_rule_scheduler()
         print("✓ Rule scheduler started (with leader election)")
         await start_insights_sync_scheduler()

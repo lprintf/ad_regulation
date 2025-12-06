@@ -4,16 +4,17 @@ import type {
   RuleDefinition,
   RuleEntityType
 } from '../../types/rule-engine'
-import { mergeBindingMetadata, stripReservedMetadata } from './utils'
 import AdAccountSelect from '../../components/AdAccountSelect'
 
 export interface RuleBindingFormValues {
   ruleId: string
+  ruleConfigId?: string | null
   entityType: RuleEntityType
   entityId: string
-  accountId?: string
-  metadata?: Record<string, unknown>
-  notes?: string
+  adAccountId: string
+  campaignId?: string | null
+  adsetId?: string | null
+  adId?: string | null
   active?: boolean
 }
 
@@ -44,10 +45,10 @@ const RuleBindingForm = ({
   const [ruleId, setRuleId] = useState('')
   const [entityType, setEntityType] = useState<RuleEntityType>('account')
   const [entityId, setEntityId] = useState('')
-  const [accountId, setAccountId] = useState('')
-  const [metadata, setMetadata] = useState('')
-  const [metadataError, setMetadataError] = useState('')
-  const [notes, setNotes] = useState('')
+  const [adAccountId, setAdAccountId] = useState('')
+  const [campaignId, setCampaignId] = useState('')
+  const [adsetId, setAdsetId] = useState('')
+  const [adId, setAdId] = useState('')
   const [active, setActive] = useState(true)
 
   useEffect(() => {
@@ -55,13 +56,10 @@ const RuleBindingForm = ({
       setRuleId(initialValues.ruleId)
       setEntityType(initialValues.entityType)
       setEntityId(initialValues.entityId)
-      setAccountId(initialValues.accountId ?? '')
-
-      const editableMetadata = stripReservedMetadata(initialValues.metadata)
-      setMetadata(
-        editableMetadata ? JSON.stringify(editableMetadata, null, 2) : ''
-      )
-      setNotes(initialValues.notes ?? '')
+      setAdAccountId(initialValues.adAccountId ?? '')
+      setCampaignId(initialValues.campaignId ?? '')
+      setAdsetId(initialValues.adsetId ?? '')
+      setAdId(initialValues.adId ?? '')
       setActive(initialValues.active)
     } else if (rules.length > 0) {
       setRuleId(rules[0].id)
@@ -70,40 +68,15 @@ const RuleBindingForm = ({
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    setMetadataError('')
-
-    let metadataObject: Record<string, unknown> | undefined
-    if (metadata.trim().length > 0) {
-      try {
-        const parsed = JSON.parse(metadata)
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          metadataObject = parsed as Record<string, unknown>
-        } else {
-          setMetadataError('元数据需要是一个 JSON 对象')
-          return
-        }
-      } catch (parseError) {
-        setMetadataError('元数据必须为合法的 JSON 字符串')
-        return
-      }
-    }
-
-    const normalizedAccountId = accountId.trim()
-    const normalizedNotes = notes.trim()
-
-    const mergedMetadata = mergeBindingMetadata(
-      metadataObject,
-      accountId === '' ? '' : normalizedAccountId,
-      notes === '' ? '' : normalizedNotes
-    )
 
     onSubmit({
       ruleId,
       entityType,
       entityId,
-      accountId: accountId === '' ? '' : normalizedAccountId,
-      metadata: mergedMetadata,
-      notes: notes === '' ? '' : normalizedNotes,
+      adAccountId: adAccountId.trim(),
+      campaignId: campaignId.trim() || null,
+      adsetId: adsetId.trim() || null,
+      adId: adId.trim() || null,
       active
     })
   }
@@ -116,7 +89,7 @@ const RuleBindingForm = ({
         <div>
           <div className="card__title">{title}</div>
           <div className="card__subtitle">
-            绑定规则到指定实体，支持手动绑定或与命名解析逻辑保持一致。
+            绑定规则到指定实体，需要填写完整的广告层级信息。
           </div>
         </div>
         <div className="toolbar__group">
@@ -170,7 +143,7 @@ const RuleBindingForm = ({
 
       <div className="grid-two-columns">
         <label className="form-label">
-          <span>实体 ID</span>
+          <span>实体 ID *</span>
           <input
             className="input"
             placeholder="广告/广告组/广告系列/账号 ID"
@@ -181,39 +154,53 @@ const RuleBindingForm = ({
         </label>
 
         <label className="form-label">
-          <span>所属账号 (可选)</span>
+          <span>广告账号 ID *</span>
           <AdAccountSelect
-            value={accountId}
-            onChange={setAccountId}
+            value={adAccountId}
+            onChange={setAdAccountId}
             placeholder="act_ 开头的账号 ID"
             inputClassName="input"
-            helperText="如果留空，将在所有账号中匹配该实体。"
+            helperText="必填，用于查询索引"
           />
         </label>
       </div>
 
-      <label className="form-label">
-        <span>元数据 JSON (可选)</span>
-        <textarea
-          className="textarea"
-          rows={4}
-          placeholder='{"ad_account_id": "act_123", "budget_guard": true}'
-          value={metadata}
-          onChange={event => setMetadata(event.target.value)}
-        />
-        {metadataError && <div className="form-hint" style={{ color: 'var(--color-danger)' }}>{metadataError}</div>}
-      </label>
+      <div className="grid-two-columns">
+        <label className="form-label">
+          <span>广告系列 ID {entityType !== 'account' ? '*' : '(可选)'}</span>
+          <input
+            className="input"
+            placeholder="Campaign ID"
+            value={campaignId}
+            onChange={event => setCampaignId(event.target.value)}
+            required={entityType !== 'account'}
+          />
+        </label>
 
-      <label className="form-label">
-        <span>备注 (可选)</span>
-        <textarea
-          className="textarea"
-          rows={3}
-          placeholder="额外说明，例如绑定原因或生命周期。"
-          value={notes}
-          onChange={event => setNotes(event.target.value)}
-        />
-      </label>
+        <label className="form-label">
+          <span>广告组 ID {entityType === 'adset' || entityType === 'ad' ? '*' : '(可选)'}</span>
+          <input
+            className="input"
+            placeholder="AdSet ID"
+            value={adsetId}
+            onChange={event => setAdsetId(event.target.value)}
+            required={entityType === 'adset' || entityType === 'ad'}
+          />
+        </label>
+      </div>
+
+      {entityType === 'ad' && (
+        <label className="form-label">
+          <span>广告 ID *</span>
+          <input
+            className="input"
+            placeholder="Ad ID"
+            value={adId}
+            onChange={event => setAdId(event.target.value)}
+            required
+          />
+        </label>
+      )}
 
       {mode === 'edit' && (
         <label className="form-label checkbox-label">

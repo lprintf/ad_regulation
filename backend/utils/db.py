@@ -85,14 +85,50 @@ class RuleDefinitionDocument(Document):
         ]
 
 
+class RuleConfigDocument(Document):
+    """
+    规则配置（变体）- 存储基于代码规则的参数覆盖
+    允许用户"复制"规则并修改默认参数，而不需要修改代码
+    """
+    name: str  # 配置名称，如 "ml_auto_stop_conservative"
+    base_rule: str  # 基础规则名，如 "ml_auto_stop"
+    description: str | None = None
+    version: str = Field(default="1.0.0")  # 修订号
+    parameter_overrides: dict[str, Any] = Field(default_factory=dict)  # 参数覆盖
+    tags: list[str] = Field(default_factory=list)
+    is_active: bool = True
+    created_by: str | None = None
+    updated_by: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "rule_configs"
+        indexes = [
+            IndexModel("name", unique=True),
+            IndexModel("base_rule"),
+            IndexModel("tags"),
+        ]
+
+
 class RuleBindingDocument(Document):
-    rule: Link[RuleDefinitionDocument]
-    rule_id: str
+    # rule link is optional for backward compatibility (rules are now code-based)
+    rule: Optional[Link[RuleDefinitionDocument]] = None
+    rule_id: str  # Now stores rule name for registry lookup
     rule_name: str
+    rule_config_id: str | None = None  # Optional: link to RuleConfigDocument for parameter overrides
+
+    # Entity binding info
     entity_type: Literal["ad", "adset", "campaign", "account"]
     entity_id: str
+
+    # Ad hierarchy fields for indexing and querying
+    ad_account_id: str
+    campaign_id: str | None = None
+    adset_id: str | None = None
+    ad_id: str | None = None
+
     source: Literal["manual", "auto", "naming_parser"] = "manual"
-    metadata: dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -105,6 +141,11 @@ class RuleBindingDocument(Document):
             IndexModel("rule_id"),
             IndexModel("entity_id"),
             IndexModel("rule_name"),
+            IndexModel("rule_config_id"),
+            IndexModel("ad_account_id"),
+            IndexModel([("ad_account_id", 1), ("campaign_id", 1)]),
+            IndexModel([("ad_account_id", 1), ("adset_id", 1)]),
+            IndexModel([("ad_account_id", 1), ("ad_id", 1)]),
         ]
 
 
@@ -321,6 +362,7 @@ async def init_db(mongodb_url=MONGODB_URL):
             FbAppAuthDocument,
             BIUserAdAccountLink,
             RuleDefinitionDocument,
+            RuleConfigDocument,
             RuleBindingDocument,
             RuleExecutionLogDocument,
             InsightsDailyDocument,

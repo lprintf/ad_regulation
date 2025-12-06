@@ -13,6 +13,7 @@ import type { InsightRecord, InsightsDataResponse } from '../../types/insights'
 import type { RuleEntityType } from '../../types/rule-engine'
 import RuleBindingModal, { type RuleBindingTarget } from './RuleBindingModal'
 import PerformanceTrendChart from './PerformanceTrendChart'
+import RuleBindingsList from '../../components/RuleBindingsList'
 
 const numberFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0
@@ -257,6 +258,10 @@ interface AggregatedEntityRow {
   entityId: string
   entityName: string | null
   accountId: string | null
+  // Ad hierarchy for rule binding
+  campaignId: string | null
+  adsetId: string | null
+  adId: string | null
   dateCount: number
   metrics: Record<MetricKey, number>
   startDate: string
@@ -758,6 +763,9 @@ const InsightsDataPage = () => {
           entityId,
           entityName: getEntityName(record),
           accountId: record.adAccountId ?? null,
+          campaignId: record.campaignId ?? null,
+          adsetId: record.adsetId ?? null,
+          adId: record.adId ?? null,
           dateCount: 0,
           metrics: createMetricBucket(),
           startDate: record.date,
@@ -1484,11 +1492,16 @@ const InsightsDataPage = () => {
 
   const handleManageRules = useCallback(
     (entity: AggregatedEntityRow) => {
+      // Build ad hierarchy based on entity type
+      const entityType = resultLevel as RuleEntityType
       const nextTarget: RuleBindingTarget = {
         entityId: entity.entityId,
         entityName: entity.entityName,
-        entityType: resultLevel as RuleEntityType,
-        accountId: entity.accountId
+        entityType,
+        adAccountId: entity.accountId || '',
+        campaignId: entityType === 'account' ? null : entity.campaignId,
+        adsetId: entityType === 'account' || entityType === 'campaign' ? null : entity.adsetId,
+        adId: entityType === 'ad' ? entity.adId : null
       }
       setRuleBindingTarget(nextTarget)
       setIsRuleBindingModalOpen(true)
@@ -2485,6 +2498,24 @@ const InsightsDataPage = () => {
                   )}
                 </div>
               )
+            },
+            {
+              key: 'bindings',
+              label: '已绑定规则',
+              children: detailEntityId ? (
+                <div>
+                  <div style={{ marginBottom: '1rem', color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
+                    此实体已绑定以下规则，规则会按计划自动执行
+                  </div>
+                  <RuleBindingsList
+                    entityId={detailEntityId}
+                    showRuleName={true}
+                    showEntityId={false}
+                    allowDelete={true}
+                    allowToggle={true}
+                  />
+                </div>
+              ) : null
             }
           ]} />
         )}

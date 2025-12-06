@@ -22,7 +22,8 @@ This is an **automated Facebook advertising regulation system** designed to opti
 - ✅ FastAPI service layer with Insights data endpoints
 - ✅ ML prediction API endpoints for ad evaluation
 - ✅ Ad control operations (start/stop ads, update names, modify budgets)
-- 🚧 Rule-based evaluation engine (to be implemented)
+- ✅ Rule-based evaluation engine (registry-based, code-defined rules)
+- ✅ ML-integrated rules (rules can directly call ML models)
 - 🚧 Automated decision-making system (to be implemented)
 
 ## Architecture
@@ -420,6 +421,32 @@ All endpoints require the `X-User-Id` header for user authentication.
   - Returns: List of historical modification records with event time, actor, event type, object details, and extra metadata
   - Use cases: Track who changed what and when, audit ad modifications, debug unexpected changes
 
+#### Rule Engine (Registry-based)
+
+规则系统采用代码定义模式，规则通过 Python 类实现并自动注册到 `RULE_REGISTRY`。
+
+**Available Rules (Read-only)**
+- `GET /rules/available` - 列出所有可用规则
+  - Returns: 规则元数据列表（name, description, version, tags, parameters_schema）
+- `GET /rules/available/{rule_name}` - 获取单个规则详情
+  - Path parameter: `rule_name` (e.g., "ml_auto_stop", "demo_spend_guard")
+  - Returns: 规则元数据
+
+**Rule Bindings**
+- `POST /rules/bindings` - 创建规则绑定
+  - Request body: JSON with `rule_id` (规则名), `entity_type`, `entity_id`, `ad_account_id` (必填), `rule_config_id` (可选)
+  - Note: `rule_id` 是规则名称（如 "ml_auto_stop"），`ad_account_id` 是广告账号ID
+- `GET /rules/bindings` - 列出规则绑定
+  - Query parameters: `rule_name`, `entity_id`, `active_only`
+- `PATCH /rules/bindings/{binding_id}` - 更新绑定（激活/停用、修改 rule_config_id）
+- `DELETE /rules/bindings/{binding_id}` - 删除绑定
+- `GET /rules/bindings/{binding_id}/executions` - 获取绑定的执行历史
+
+**Rule Execution**
+- `POST /rules/execute` - 手动触发规则执行（后台异步）
+  - Request body: JSON with `binding_id` or `rule_id`, `trigger`, `params`
+- `GET /rules/executions` - 获取执行日志列表
+
 ### Usage Examples
 
 #### Example 1: Query Database for Historical Data (Ad Level)
@@ -648,6 +675,68 @@ curl -X GET "http://localhost:8000/ad-control/activities?ad_account_id=127956764
 # }
 ```
 
+#### Example 14: List Available Rules
+```bash
+curl -X GET "http://localhost:8000/rules/available" \
+  -H "X-User-Id: user123"
+
+# Response:
+# {
+#   "success": true,
+#   "data": [
+#     {
+#       "name": "ml_auto_stop",
+#       "description": "基于 ML 模型预测广告停止概率，自动评估广告表现",
+#       "version": "2.0.0",
+#       "tags": ["ml", "auto_stop", "prediction"],
+#       "parameters_schema": {
+#         "lookback_days": {"type": "integer", "default": 10, ...},
+#         "stop_probability_threshold": {"type": "number", "default": 0.7, ...},
+#         "dry_run": {"type": "boolean", "default": true, ...}
+#       }
+#     }
+#   ]
+# }
+```
+
+#### Example 15: Create Rule Binding
+```bash
+curl -X POST "http://localhost:8000/rules/bindings" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "rule_id": "ml_auto_stop",
+    "entity_type": "ad",
+    "entity_id": "120234815168290189",
+    "ad_account_id": "1279567647104057"
+  }'
+```
+
+#### Example 16: Execute Rule Manually
+```bash
+curl -X POST "http://localhost:8000/rules/execute" \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user123" \
+  -d '{
+    "binding_id": "674a1234567890abcdef1234",
+    "trigger": "manual",
+    "params": {
+      "dry_run": true,
+      "lookback_days": 14
+    }
+  }'
+
+# Response (异步执行，立即返回):
+# {
+#   "success": true,
+#   "data": {
+#     "status": "accepted",
+#     "message": "Rule execution started in background",
+#     "binding_id": "674a1234567890abcdef1234"
+#   }
+# }
+```
+
 ### Response Format
 All endpoints return standardized JSON responses:
 
@@ -670,4 +759,99 @@ All endpoints return standardized JSON responses:
     "details": { ... }
   }
 }
+```
+
+## Frontend Architecture
+
+### Page Structure
+
+The frontend uses React + TypeScript + Vite, with 4 main pages:
+
+| Route | Page | Description |
+|-------|------|-------------|
+| `/ads` | 广告管理 | Ad data browsing, metrics, trends, rule bindings |
+| `/rules` | 规则管理 | Rule definitions, configs, and bindings (tabbed) |
+| `/scheduler` | 调度管理 | Scheduler tasks and execution logs (tabbed) |
+| `/accounts` | 账号管理 | Account authorization and data sync (tabbed) |
+
+### Directory Structure
+
+```
+frontend/src/
+├── api/                    # API client functions
+│   ├── ruleEngine.ts       # Rule engine APIs
+│   ├── insights.ts         # Insights data APIs
+│   ├── facebookAuth.ts     # Facebook auth APIs
+│   └── adAccounts.ts       # Ad account APIs
+├── components/
+│   ├── layout/             # App layout components
+│   │   ├── AppLayout.tsx
+│   │   └── Sidebar.tsx
+│   ├── RuleBindingsList.tsx  # Reusable bindings list with execution logs
+│   └── DateTimelineSelector.tsx
+├── features/
+│   ├── insights-data/      # Ad Management page
+│   │   ├── InsightsDataPage.tsx
+│   │   ├── PerformanceTrendChart.tsx
+│   │   └── RuleBindingModal.tsx
+│   ├── rule-definitions/   # Rule Management page
+│   │   └── RuleDefinitionsPage.tsx
+│   ├── rule-bindings/      # Shared components for rule bindings
+│   │   ├── RuleBindingForm.tsx
+│   │   ├── RuleBindingTestPanel.tsx
+│   │   └── SmartParameterForm.tsx
+│   ├── scheduler/          # Scheduler Management page
+│   │   └── SchedulerManagementPage.tsx
+│   └── accounts/           # Account Management page
+│       └── AccountManagementPage.tsx
+├── lib/
+│   ├── apiResponse.ts      # API response extraction utilities
+│   └── datetime.ts         # Date formatting utilities
+└── types/
+    ├── rule-engine.ts      # Rule engine types
+    ├── insights.ts         # Insights types
+    └── facebook-auth.ts    # Facebook auth types
+```
+
+### Key Components
+
+**RuleBindingsList** (`components/RuleBindingsList.tsx`)
+- Reusable component for displaying rule bindings
+- Supports filtering by `ruleName` or `entityId`
+- Includes execution logs modal for each binding
+- Used in both Rule Management and Ad Management pages
+
+**RuleDefinitionsPage** (`features/rule-definitions/RuleDefinitionsPage.tsx`)
+- Two tabs: "规则列表" (Rule List) and "规则绑定" (Rule Bindings)
+- Rule details view shows parameters and bound entities
+- Supports cloning rules with parameter overrides
+
+**SchedulerManagementPage** (`features/scheduler/SchedulerManagementPage.tsx`)
+- Two tabs: "调度任务" (Scheduler Tasks) and "执行日志" (Execution Logs)
+- Task editing with cron expression and metadata
+- Log filtering by rule, status, and trigger type
+
+**AccountManagementPage** (`features/accounts/AccountManagementPage.tsx`)
+- Two tabs: "账号授权" (Authorization) and "数据同步" (Data Sync)
+- Authorization panel with channel dropdown (Facebook/Google/Pinterest)
+- Sync status cards with MongoDB/Redis status and history
+
+### State Management
+
+- Uses **TanStack Query (React Query)** for server state
+- Query keys follow pattern: `['resource-type', filters]`
+- Mutations invalidate related queries on success
+- Common stale times: 30s for sync data, 60s for rules
+
+### Build & Development
+
+```bash
+# Development
+npm run dev
+
+# Production build
+npm run build   # Outputs to dist/
+
+# Type checking
+npm run tsc
 ```

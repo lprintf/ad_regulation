@@ -16,23 +16,8 @@ const RuleBindingTestPanel = ({ binding, parametersSchema }: RuleBindingTestPane
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null)
   const [showParamsDialog, setShowParamsDialog] = useState(false)
 
-  // Extract ad_account_id from metadata or entity_id
-  // Entity IDs typically have format like "act_123" for accounts or may need to be queried
-  const getAdAccountId = (): string | undefined => {
-    // First check metadata
-    if (binding.metadata?.ad_account_id) {
-      return binding.metadata.ad_account_id as string
-    }
-    // If entity type is account, the entity_id IS the account ID
-    if (binding.entityType === 'account') {
-      return binding.entityId
-    }
-    // For ad/adset/campaign, we may need to query or it might be in metadata
-    // For now, return undefined and let the timeline gracefully handle missing data
-    return undefined
-  }
-
-  const adAccountId = getAdAccountId()
+  // Get ad_account_id from binding's ad hierarchy
+  const adAccountId = binding.adAccountId || (binding.entityType === 'account' ? binding.entityId : undefined)
 
   // Fetch execution history
   const {

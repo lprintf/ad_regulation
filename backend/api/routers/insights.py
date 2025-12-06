@@ -15,7 +15,6 @@ from api.models.insights import (
     AsyncJobStatusResponse,
     EntityNamesSyncRequest,
     EntityNamesSyncResult,
-    EntityTimelineResponse,
     InsightAccountSyncStatus,
     InsightRecord,
     InsightsAccountSyncResponse,
@@ -1443,57 +1442,5 @@ async def sync_entity_names(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to sync entity names: {str(e)}",
-        )
-
-
-@router.get("/entity-timeline", response_model=SuccessResponse[EntityTimelineResponse])
-async def get_entity_timeline(
-    ad_account_id: Annotated[str, Query(description="Ad account ID")],
-    entity_id: Annotated[str, Query(description="Entity ID (ad/adset/campaign)")],
-    entity_type: Annotated[str, Query(description="Entity type")] = "ad",
-    _current_user: str = Depends(get_current_user),
-) -> SuccessResponse[EntityTimelineResponse]:
-    """
-    Get timeline data for a specific entity.
-
-    Returns daily metrics (spend, clicks, impressions) for the entity,
-    with date range extended by ±1 day for better visualization context.
-    Used by the frontend's date selector to show a timeline chart.
-
-    Args:
-        ad_account_id: Ad account ID
-        entity_id: Entity ID
-        entity_type: Type of entity (ad, adset, or campaign)
-
-    Returns:
-        Timeline data with daily metrics
-    """
-    try:
-        if entity_type not in ["ad", "adset", "campaign"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid entity_type: {entity_type}. Must be ad, adset, or campaign",
-            )
-
-        result = await InsightsService.get_entity_timeline(
-            ad_account_id=normalize_account_id(ad_account_id),
-            entity_id=entity_id,
-            entity_type=entity_type,
-        )
-
-        return SuccessResponse(
-            data=EntityTimelineResponse(**result),
-            message=f"Successfully fetched timeline for {entity_type} {entity_id}",
-        )
-
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch entity timeline: {str(e)}",
         )
 

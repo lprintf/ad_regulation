@@ -4,13 +4,10 @@ import { Spin } from 'antd'
 import AppLayout from './components/layout/AppLayout'
 
 // 路由级懒加载
-const RuleDefinitionsPage = lazy(() => import('./features/rule-definitions/RuleDefinitionsPage'))
-const RuleBindingsPage = lazy(() => import('./features/rule-bindings/RuleBindingsPage'))
-const ExecutionLogsPage = lazy(() => import('./features/execution-logs/ExecutionLogsPage'))
-const SchedulerPage = lazy(() => import('./features/scheduler/SchedulerPage'))
-const InsightsDataPage = lazy(() => import('./features/insights-data/InsightsDataPage'))
-const InsightsSyncPage = lazy(() => import('./features/insights-sync/InsightsSyncPage'))
-const FacebookAuthPage = lazy(() => import('./features/facebook-auth/FacebookAuthPage'))
+const AdManagementPage = lazy(() => import('./features/insights-data/InsightsDataPage'))
+const RuleManagementPage = lazy(() => import('./features/rule-definitions/RuleDefinitionsPage'))
+const SchedulerManagementPage = lazy(() => import('./features/scheduler/SchedulerManagementPage'))
+const AccountManagementPage = lazy(() => import('./features/accounts/AccountManagementPage'))
 
 const App = () => {
   return (
@@ -27,15 +24,20 @@ const App = () => {
           </div>
         }>
           <Routes>
-            <Route index element={<Navigate to="/rules/definitions" replace />} />
-            <Route path="/rules/definitions" element={<RuleDefinitionsPage />} />
-            <Route path="/rules/bindings" element={<RuleBindingsPage />} />
-            <Route path="/rules/executions" element={<ExecutionLogsPage />} />
-            <Route path="/rules/scheduler" element={<SchedulerPage />} />
-            <Route path="/insights/data" element={<InsightsDataPage />} />
-            <Route path="/integrations/facebook" element={<FacebookAuthPage />} />
-            <Route path="/insights/sync-runs" element={<InsightsSyncPage />} />
-            <Route path="*" element={<Navigate to="/rules/definitions" replace />} />
+            <Route index element={<Navigate to="/ads" replace />} />
+            <Route path="/ads" element={<AdManagementPage />} />
+            <Route path="/rules" element={<RuleManagementPage />} />
+            <Route path="/scheduler" element={<SchedulerManagementPage />} />
+            <Route path="/accounts" element={<AccountManagementPage />} />
+            {/* Legacy redirects */}
+            <Route path="/insights/data" element={<Navigate to="/ads" replace />} />
+            <Route path="/rules/definitions" element={<Navigate to="/rules" replace />} />
+            <Route path="/rules/bindings" element={<Navigate to="/rules" replace />} />
+            <Route path="/rules/executions" element={<Navigate to="/scheduler" replace />} />
+            <Route path="/rules/scheduler" element={<Navigate to="/scheduler" replace />} />
+            <Route path="/insights/sync-runs" element={<Navigate to="/accounts" replace />} />
+            <Route path="/integrations/facebook" element={<Navigate to="/accounts" replace />} />
+            <Route path="*" element={<Navigate to="/ads" replace />} />
           </Routes>
         </Suspense>
       </AppLayout>

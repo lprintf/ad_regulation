@@ -10,9 +10,13 @@ interface PerformanceTrendChartProps {
 
 const METRIC_CONFIG = [
   { key: 'spend', label: 'Spend ($)', color: '#3b82f6', yAxisId: 'left' },
+  { key: 'roas', label: 'ROAS', color: '#22c55e', yAxisId: 'roas' },
+  { key: 'ctr', label: 'CTR (%)', color: '#eab308', yAxisId: 'percent' },
   { key: 'impressions', label: 'Impressions', color: '#10b981', yAxisId: 'right' },
   { key: 'reach', label: 'Reach', color: '#8b5cf6', yAxisId: 'right' },
   { key: 'clicks', label: 'Clicks', color: '#f59e0b', yAxisId: 'right' },
+  { key: 'cpc', label: 'CPC ($)', color: '#6366f1', yAxisId: 'left' },
+  { key: 'cpm', label: 'CPM ($)', color: '#8b5cf6', yAxisId: 'left' },
   { key: 'inlineLinkClicks', label: 'Inline Link Clicks', color: '#ef4444', yAxisId: 'right' },
   { key: 'outboundClicks', label: 'Outbound Clicks', color: '#ec4899', yAxisId: 'right' },
   { key: 'landingPageView', label: 'Landing Page Views', color: '#06b6d4', yAxisId: 'right' },
@@ -29,7 +33,7 @@ const PerformanceTrendChart = ({
   onDateSelect,
   selectedDate
 }: PerformanceTrendChartProps) => {
-  const [selectedMetrics, setSelectedMetrics] = useState<MetricKey[]>(['spend', 'clicks', 'onsiteWebPurchase'])
+  const [selectedMetrics, setSelectedMetrics] = useState<MetricKey[]>(['spend', 'roas', 'ctr'])
 
   // Group by date and aggregate metrics
   const chartData = useMemo(() => {
@@ -150,7 +154,7 @@ const PerformanceTrendChart = ({
               height={80}
             />
 
-            {/* Left Y-Axis for spend and purchase value */}
+            {/* Left Y-Axis for spend and cost metrics */}
             {selectedMetrics.some(m => METRIC_CONFIG.find(c => c.key === m)?.yAxisId === 'left') && (
               <YAxis
                 yAxisId="left"
@@ -169,6 +173,29 @@ const PerformanceTrendChart = ({
               />
             )}
 
+            {/* ROAS Y-Axis */}
+            {selectedMetrics.some(m => METRIC_CONFIG.find(c => c.key === m)?.yAxisId === 'roas') && (
+              <YAxis
+                yAxisId="roas"
+                orientation="right"
+                tick={{ fontSize: 12, fill: '#22c55e' }}
+                axisLine={{ stroke: '#22c55e' }}
+                tickLine={{ stroke: '#22c55e' }}
+              />
+            )}
+
+            {/* CTR Y-Axis (percent) */}
+            {selectedMetrics.some(m => METRIC_CONFIG.find(c => c.key === m)?.yAxisId === 'percent') && (
+              <YAxis
+                yAxisId="percent"
+                orientation="right"
+                tick={{ fontSize: 12, fill: '#eab308' }}
+                axisLine={{ stroke: '#eab308' }}
+                tickLine={{ stroke: '#eab308' }}
+                tickFormatter={(value) => `${(value * 100).toFixed(1)}%`}
+              />
+            )}
+
             <Tooltip
               contentStyle={{
                 background: 'rgba(255, 255, 255, 0.96)',
@@ -176,8 +203,12 @@ const PerformanceTrendChart = ({
                 borderRadius: '8px',
                 boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
               }}
-              formatter={(value: any) => {
+              formatter={(value: any, name: string) => {
                 if (typeof value === 'number') {
+                  // CTR is stored as decimal, display as percentage
+                  if (name === 'CTR (%)') {
+                    return `${(value * 100).toFixed(2)}%`
+                  }
                   return value.toFixed(2)
                 }
                 return value

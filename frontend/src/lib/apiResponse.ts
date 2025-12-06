@@ -3,11 +3,14 @@
  * 统一处理后端返回的响应格式，减少重复代码
  */
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyObject = Record<string, any>
+
 /**
  * 从API响应中提取data字段
  * 处理 {data: T} 或直接返回 T 的情况
  */
-export const extractResponseData = <T>(response: any, fallback?: T): T => {
+export const extractResponseData = <T = AnyObject>(response: AnyObject | null | undefined, fallback?: T): T => {
   if (response?.data !== undefined) {
     return response.data as T
   }
@@ -18,15 +21,13 @@ export const extractResponseData = <T>(response: any, fallback?: T): T => {
  * 从API响应中提取嵌套的payload数据
  * 处理多层嵌套：data?.data, data?.items, 或直接数组等情况
  */
-export const extractResponsePayload = <T>(response: any, fallback?: T): T => {
-  const data = extractResponseData(response)
+export const extractResponsePayload = <T = AnyObject>(response: AnyObject | null | undefined, fallback?: T): T => {
+  const data = extractResponseData<AnyObject>(response)
 
-  // 如果data本身是数组，直接返回
   if (Array.isArray(data)) {
     return data as T
   }
 
-  // 尝试从多个可能的字段中提取数据
   return (data?.items ?? data?.data ?? data ?? fallback) as T
 }
 
@@ -42,32 +43,26 @@ export interface PaginatedResult<T> {
 }
 
 export const extractPaginatedResponse = <T>(
-  response: any,
-  mapFn?: (item: any) => T
+  response: AnyObject | null | undefined,
+  mapFn?: (item: AnyObject) => T
 ): PaginatedResult<T> => {
   const payload = extractResponseData(response)
 
-  // 提取原始items数组
-  const rawItems: any[] = (() => {
-    if (Array.isArray(payload?.data)) {
-      return payload.data
-    }
-    if (Array.isArray(payload)) {
-      return payload
-    }
-    if (Array.isArray(payload?.items)) {
-      return payload.items
-    }
-    if (Array.isArray(payload?.data?.items)) {
-      return payload.data.items
-    }
+  // Handle array response directly
+  if (Array.isArray(payload)) {
+    const items = mapFn ? payload.map(mapFn) : (payload as unknown as T[])
+    return { items, total: items.length, page: 1, pageSize: items.length || 50 }
+  }
+
+  // Extract items from object response
+  const rawItems: AnyObject[] = (() => {
+    if (Array.isArray(payload?.data)) return payload.data
+    if (Array.isArray(payload?.items)) return payload.items
+    if (Array.isArray(payload?.data?.items)) return payload.data.items
     return []
   })()
 
-  // 应用映射函数（如果提供）
-  const items = mapFn ? rawItems.map(mapFn) : rawItems
-
-  // 提取total
+  const items = mapFn ? rawItems.map(mapFn) : (rawItems as unknown as T[])
   const total = payload?.data?.total ?? payload?.total ?? rawItems.length
 
   return {
@@ -82,7 +77,7 @@ export const extractPaginatedResponse = <T>(
  * 从API响应中提取单个对象
  * 处理 {data: {data: T}} 或 {data: T} 的情况
  */
-export const extractSingleObject = <T>(response: any, fallback?: T): T => {
-  const data = extractResponseData(response)
+export const extractSingleObject = <T = AnyObject>(response: AnyObject | null | undefined, fallback?: T): T => {
+  const data = extractResponseData<AnyObject>(response)
   return (data?.data ?? data ?? fallback) as T
 }
