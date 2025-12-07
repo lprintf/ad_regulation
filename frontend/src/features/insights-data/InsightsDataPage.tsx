@@ -1,5 +1,4 @@
 import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
-import type { CSSProperties } from 'react'
 import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query'
 import { Modal, Spinner, Tabs, toast } from '@/components/ui'
 import {
@@ -131,11 +130,7 @@ const sanitizeColumnWidths = (source: unknown): Record<MetricKey, number> => {
   return widths
 }
 
-const RESPONSIVE_CONTAINER_STYLE: CSSProperties = {
-  width: 'min(1200px, max(320px, calc(100vw - var(--sidebar-width, 260px) - 64px)))',
-  maxWidth: '100%',
-  margin: '0 auto'
-}
+// Replaced by CSS class .responsive-container
 
 const sanitizeVisibleMetrics = (keys: unknown, fallback: MetricKey[]): MetricKey[] => {
   if (!Array.isArray(keys)) {
@@ -1625,7 +1620,7 @@ const InsightsDataPage = () => {
 
   return (
     <div className="page">
-      <header className="page__header" style={RESPONSIVE_CONTAINER_STYLE}>
+      <header className="page__header responsive-container">
         <div>
           <h1 className="page__title">洞察数据浏览</h1>
           <p className="page__subtitle">
@@ -1634,7 +1629,7 @@ const InsightsDataPage = () => {
         </div>
       </header>
 
-      <section className="card" style={RESPONSIVE_CONTAINER_STYLE}>
+      <section className="card responsive-container">
         <div className="card__header">
           <div>
             <div className="card__title">筛选条件</div>
@@ -1643,12 +1638,8 @@ const InsightsDataPage = () => {
             </div>
           </div>
         </div>
-        <form
-          onSubmit={handleSubmit}
-          className="card__body"
-          style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem' }}
-        >
-          <label className="form-label" style={{ flex: '0 1 140px' }}>
+        <form onSubmit={handleSubmit} className="card__body flex flex-wrap gap-4">
+          <label className="form-label flex-[0_1_140px]">
             <span>起始日期</span>
             <input
               type="date"
@@ -1657,7 +1648,7 @@ const InsightsDataPage = () => {
               onChange={event => setSinceDate(event.target.value)}
             />
           </label>
-          <label className="form-label" style={{ flex: '0 1 140px' }}>
+          <label className="form-label flex-[0_1_140px]">
             <span>结束日期</span>
             <input
               type="date"
@@ -1666,10 +1657,8 @@ const InsightsDataPage = () => {
               onChange={event => setUntilDate(event.target.value)}
             />
           </label>
-          <div className="form-label" style={{ flex: '0 1 220px' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-              数据源
-            </span>
+          <div className="form-label flex-[0_1_220px]">
+            <span className="inline-flex items-center gap-1">数据源</span>
             <select
               className="input"
               value={selectedDataSource}
@@ -1683,9 +1672,9 @@ const InsightsDataPage = () => {
           </div>
 
           {formError && (
-            <div style={{ flexBasis: '100%', color: 'var(--color-danger)' }}>{formError}</div>
+            <div className="basis-full text-destructive">{formError}</div>
           )}
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <div className="flex gap-3">
             <button className="button button--primary" type="submit" disabled={isLoading}>
               {isLoading ? '查询中…' : '查询 / 刷新数据'}
             </button>
@@ -1693,7 +1682,7 @@ const InsightsDataPage = () => {
         </form>
       </section>
 
-      <section className="card" style={{ ...RESPONSIVE_CONTAINER_STYLE, marginTop: '1.5rem' }}>
+      <section className="card responsive-container mt-6">
         <div className="card__header">
           <div>
             <div className="card__title">洞察结果</div>
@@ -1705,11 +1694,11 @@ const InsightsDataPage = () => {
                 : '正在加载默认数据…'}
             </div>
           </div>
-          {isRefetching && <div style={{ color: 'var(--color-text-muted)' }}>刷新中…</div>}
+          {isRefetching && <div className="text-muted-foreground">刷新中…</div>}
         </div>
 
         {errorMessage ? (
-          <div className="card__body" style={{ color: 'var(--color-danger)' }}>{errorMessage}</div>
+          <div className="card__body text-destructive">{errorMessage}</div>
         ) : isLoading ? (
           <div className="card__body">数据加载中…</div>
         ) : !lastSubmittedParams ? (

@@ -4,7 +4,7 @@ import { Loading } from '@/components/ui'
 import AppLayout from './components/layout/AppLayout'
 
 // 路由级懒加载
-const AdManagementPage = lazy(() => import('./features/insights-data/InsightsDataPage'))
+const AdManagementPage = lazy(() => import('./features/insights-data/InsightsDataPageSimplified'))
 const RuleManagementPage = lazy(() => import('./features/rule-definitions/RuleDefinitionsPage'))
 const SchedulerManagementPage = lazy(() => import('./features/scheduler/SchedulerManagementPage'))
 const AccountManagementPage = lazy(() => import('./features/accounts/AccountManagementPage'))

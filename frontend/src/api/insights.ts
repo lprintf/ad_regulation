@@ -272,7 +272,9 @@ const mapInsightRecordFromApi = (item: any): InsightRecord => {
   }
 }
 
-export type InsightsDataSource = 'mongo' | 'mongo_redis' | 'realtime' | 'mongo_from_last'
+// Old data source type - kept for backward compatibility
+// New simplified API uses InsightsDataSource defined at the end of this file
+export type LegacyInsightsDataSource = 'mongo' | 'mongo_redis' | 'realtime' | 'mongo_from_last'
 
 export interface InsightsDataQuery {
   accountId: string
@@ -281,7 +283,7 @@ export interface InsightsDataQuery {
   level?: 'account' | 'campaign' | 'adset' | 'ad'
   timeIncrement?: number | null
   breakdowns?: string
-  source: InsightsDataSource
+  source: LegacyInsightsDataSource
   fields?: string[]
   objectLevel?: 'ad' | 'adset' | 'campaign'
   objectIds?: string[]
@@ -559,5 +561,125 @@ export const syncEntityNames = async (
     rateLimited: Number(result.rate_limited ?? result.rateLimited ?? 0),
     entities,
     failedEntities
+  }
+}
+
+
+// ===== New Simplified Insights API =====
+
+export type InsightsDataSource = 'mongo' | 'redis' | 'mongo_redis'
+
+export interface InsightsOverviewQuery {
+  accountIds: string[]
+  since: string
+  until: string
+  source?: InsightsDataSource
+}
+
+export interface AccountOverviewItem {
+  accountId: string
+  accountName: string | null
+  metrics: InsightRecord['metrics']
+  dateCount: number
+  startDate: string | null
+  endDate: string | null
+}
+
+export interface InsightsOverviewResponse {
+  items: AccountOverviewItem[]
+  totals: InsightRecord['metrics'] | null
+  dateRange: { since: string; until: string }
+}
+
+const mapAccountOverviewItem = (item: any): AccountOverviewItem => ({
+  accountId: item?.account_id ?? item?.accountId ?? '',
+  accountName: item?.account_name ?? item?.accountName ?? null,
+  metrics: mapMetrics(item?.metrics ?? {}),
+  dateCount: Number(item?.date_count ?? item?.dateCount ?? 0),
+  startDate: item?.start_date ?? item?.startDate ?? null,
+  endDate: item?.end_date ?? item?.endDate ?? null,
+})
+
+const mapMetrics = (m: any): InsightRecord['metrics'] => ({
+  spend: Number(m?.spend ?? 0),
+  impressions: Number(m?.impressions ?? 0),
+  reach: Number(m?.reach ?? 0),
+  clicks: Number(m?.clicks ?? 0),
+  inlineLinkClicks: Number(m?.inline_link_clicks ?? m?.inlineLinkClicks ?? 0),
+  outboundClicks: Number(m?.outbound_clicks ?? m?.outboundClicks ?? 0),
+  landingPageView: Number(m?.landing_page_view ?? m?.landingPageView ?? 0),
+  onsiteWebAddToCart: Number(m?.onsite_web_add_to_cart ?? m?.onsiteWebAddToCart ?? 0),
+  onsiteWebAddToCartValue: Number(m?.onsite_web_add_to_cart_value ?? m?.onsiteWebAddToCartValue ?? 0),
+  onsiteWebCheckout: Number(m?.onsite_web_checkout ?? m?.onsiteWebCheckout ?? 0),
+  onsiteWebCheckoutValue: Number(m?.onsite_web_checkout_value ?? m?.onsiteWebCheckoutValue ?? 0),
+  onsiteWebPurchase: Number(m?.onsite_web_purchase ?? m?.onsiteWebPurchase ?? 0),
+  onsiteWebPurchaseValue: Number(m?.onsite_web_purchase_value ?? m?.onsiteWebPurchaseValue ?? 0),
+})
+
+/**
+ * Fetch account-level overview (initial page load)
+ */
+export const fetchInsightsOverview = async (
+  query: InsightsOverviewQuery
+): Promise<InsightsOverviewResponse> => {
+  const params = new URLSearchParams()
+  query.accountIds.forEach(id => params.append('account_ids', id))
+  params.set('since', query.since)
+  params.set('until', query.until)
+  params.set('source', query.source ?? 'mongo_redis')
+
+  const { data } = await apiClient.get(`/insights/overview?${params.toString()}`)
+  const payload = data?.data ?? data ?? {}
+
+  return {
+    items: Array.isArray(payload?.items) ? payload.items.map(mapAccountOverviewItem) : [],
+    totals: payload?.totals ? mapMetrics(payload.totals) : null,
+    dateRange: payload?.date_range ?? payload?.dateRange ?? { since: query.since, until: query.until },
+  }
+}
+
+export interface EntitySelection {
+  accountId: string
+  campaignId: string | null
+  adsetId: string | null
+  adId: string | null
+}
+
+export type DrilldownLevel = 'campaign' | 'adset' | 'ad'
+
+export interface InsightsDrilldownQuery {
+  selections: EntitySelection[]
+  level: DrilldownLevel
+  since: string
+  until: string
+  source?: InsightsDataSource
+}
+
+/**
+ * Fetch insights with entity drilldown (selection paths)
+ */
+export const fetchInsightsDrilldown = async (
+  query: InsightsDrilldownQuery
+): Promise<InsightsDataResponse> => {
+  const requestBody = {
+    selections: query.selections.map(sel => ({
+      account_id: sel.accountId,
+      campaign_id: sel.campaignId,
+      adset_id: sel.adsetId,
+      ad_id: sel.adId,
+    })),
+    level: query.level,
+    since: query.since,
+    until: query.until,
+    source: query.source ?? 'mongo_redis',
+  }
+
+  const { data } = await apiClient.post('/insights/drilldown', requestBody)
+  const payload = data?.data ?? data ?? {}
+
+  return {
+    insights: Array.isArray(payload?.insights) ? payload.insights.map(mapInsightRecordFromApi) : [],
+    totalRecords: Number(payload?.total_records ?? payload?.totalRecords ?? 0),
+    dateRange: payload?.date_range ?? payload?.dateRange ?? { since: query.since, until: query.until },
   }
 }

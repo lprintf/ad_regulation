@@ -56,24 +56,24 @@ const AuthorizationPanel = ({ channel, onClose }: { channel: AdChannel; onClose:
   }
 
   return (
-    <div style={{ padding: '1rem' }}>
-      <div style={{ marginBottom: '1.5rem' }}>
+    <div className="p-4">
+      <div className="mb-6">
         <button
           type="button"
-          className="button button--primary"
-          style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', background: channelConfig[channel].color }}
+          className="button button--primary w-full flex items-center justify-center gap-2"
+          style={{ background: channelConfig[channel].color }}
           onClick={() => alert(`${channelConfig[channel].label} OAuth 登录功能开发中`)}
         >
           使用 {channelConfig[channel].label} 登录授权
         </button>
-        <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.875rem', margin: '1rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <div style={{ flex: 1, height: '1px', background: 'var(--color-border)' }} />
+        <div className="text-center text-muted-foreground text-sm my-4 flex items-center gap-2">
+          <div className="flex-1 h-px bg-border" />
           <span>或手动输入授权信息</span>
-          <div style={{ flex: 1, height: '1px', background: 'var(--color-border)' }} />
+          <div className="flex-1 h-px bg-border" />
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} style={{ display: 'grid', gap: '1rem' }}>
+      <form onSubmit={handleSubmit} className="grid gap-4">
         <label className="form-label">
           <span>App ID</span>
           <input className="input" value={formValues.appId} onChange={e => setFormValues(prev => ({ ...prev, appId: e.target.value }))} placeholder="应用 ID" />
@@ -87,10 +87,10 @@ const AuthorizationPanel = ({ channel, onClose }: { channel: AdChannel; onClose:
           <textarea className="textarea" rows={3} value={formValues.accessToken} onChange={e => setFormValues(prev => ({ ...prev, accessToken: e.target.value }))} placeholder="访问令牌" />
         </label>
 
-        {errorMessage && <div style={{ color: 'var(--color-danger)', fontWeight: 500 }}>{errorMessage}</div>}
-        {successMessage && <div style={{ color: 'var(--color-success)', fontWeight: 500 }}>{successMessage}</div>}
+        {errorMessage && <div className="text-destructive font-medium">{errorMessage}</div>}
+        {successMessage && <div className="text-success font-medium">{successMessage}</div>}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+        <div className="flex justify-end gap-3">
           <button type="button" className="button button--ghost" onClick={onClose}>取消</button>
           <button type="submit" className="button button--primary" disabled={syncMutation.isPending}>
             {syncMutation.isPending ? '同步中...' : '同步授权'}
@@ -142,8 +142,8 @@ const AuthRecordsTab = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+      <div className="flex justify-between items-center mb-4">
+        <div className="flex gap-2 items-center">
           <select className="select" value={selectedChannel} onChange={e => setSelectedChannel(e.target.value as AdChannel)}>
             {Object.entries(channelConfig).map(([key, cfg]) => (
               <option key={key} value={key}>{cfg.label}</option>
@@ -164,7 +164,7 @@ const AuthRecordsTab = () => {
         <div className="empty-state">暂无授权记录，请先添加授权</div>
       ) : (
         <>
-          <h4 style={{ margin: '1rem 0 0.5rem', color: 'var(--color-text-muted)' }}>授权记录 ({records.length})</h4>
+          <h4 className="my-4 text-muted-foreground">授权记录 ({records.length})</h4>
           <div className="table-wrapper">
             <table className="table">
               <thead>
@@ -184,8 +184,8 @@ const AuthRecordsTab = () => {
                   return (
                     <tr key={rowKey}>
                       <td>
-                        <div style={{ fontWeight: 600 }}>{record.application ?? '未命名应用'}</div>
-                        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+                        <div className="font-semibold">{record.application ?? '未命名应用'}</div>
+                        <div className="text-muted-foreground text-sm">
                           {record.userName ?? record.userId ?? '未知用户'} · ...{record.accessTokenLast4}
                         </div>
                       </td>
@@ -193,11 +193,11 @@ const AuthRecordsTab = () => {
                       <td><span className={status.className}>{status.label}</span></td>
                       <td>
                         <div>{record.expiresAt ? formatDateTime(record.expiresAt) : '永久'}</div>
-                        {record.expiresAt && <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{formatRelativeTime(record.expiresAt)}</div>}
+                        {record.expiresAt && <div className="text-xs text-muted-foreground">{formatRelativeTime(record.expiresAt)}</div>}
                       </td>
                       <td>{record.accounts.length} 个</td>
                       <td>
-                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <div className="flex gap-2">
                           <button className="button button--ghost" onClick={() => record.userId && refreshMutation.mutate({ appId: record.appId, userId: record.userId })} disabled={!record.userId || refreshMutation.isPending}>
                             刷新Token
                           </button>
@@ -213,7 +213,7 @@ const AuthRecordsTab = () => {
             </table>
           </div>
 
-          <h4 style={{ margin: '1.5rem 0 0.5rem', color: 'var(--color-text-muted)' }}>广告账户映射 ({accountRows.length})</h4>
+          <h4 className="mt-6 mb-2 text-muted-foreground">广告账户映射 ({accountRows.length})</h4>
           <div className="table-wrapper">
             <table className="table">
               <thead>
@@ -227,8 +227,8 @@ const AuthRecordsTab = () => {
                 {accountRows.map(({ account, app }) => (
                   <tr key={`${account.id}-${app.appId}`}>
                     <td>
-                      <div style={{ fontWeight: 600 }}>{account.name}</div>
-                      <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>{account.id}</div>
+                      <div className="font-semibold">{account.name}</div>
+                      <div className="text-muted-foreground text-sm">{account.id}</div>
                     </td>
                     <td>{app.application ?? '未命名'}</td>
                     <td>...{app.accessTokenLast4}</td>
@@ -273,8 +273,8 @@ const SyncStatusTab = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>广告账号数据同步状态</div>
+      <div className="flex justify-between items-center mb-4">
+        <div className="text-muted-foreground text-sm">广告账号数据同步状态</div>
         <button className="button button--secondary" onClick={() => overviewQuery.refetch()} disabled={overviewQuery.isFetching}>
           {overviewQuery.isFetching ? '刷新中...' : '刷新'}
         </button>
@@ -283,11 +283,11 @@ const SyncStatusTab = () => {
       {overviewQuery.isLoading ? (
         <div className="empty-state">加载中...</div>
       ) : overviewQuery.isError ? (
-        <div className="empty-state" style={{ color: 'var(--color-danger)' }}>加载失败</div>
+        <div className="empty-state text-destructive">加载失败</div>
       ) : items.length === 0 ? (
         <div className="empty-state">暂无账号数据</div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))', gap: '1rem' }}>
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))' }}>
           {items.map(item => <SyncAccountCard key={item.accountId} item={item} />)}
         </div>
       )}
@@ -323,30 +323,30 @@ const SyncAccountCard = ({ item }: { item: SyncOverviewItem }) => {
 
   return (
     <>
-      <div style={{ border: '1px solid var(--color-border)', borderRadius: '0.5rem', padding: '1rem', backgroundColor: 'var(--color-bg-elevated)' }}>
-        <div style={{ fontWeight: 600, marginBottom: '0.75rem' }}>
+      <div className="border border-border rounded-lg p-4 bg-card">
+        <div className="font-semibold mb-3">
           {item.accountName || item.accountId}
-          <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 400 }}>{item.accountId}</div>
+          <div className="text-xs text-muted-foreground font-normal">{item.accountId}</div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.875rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ color: 'var(--color-text-muted)' }}>MongoDB:</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span className={statusClassMap[item.mongodbStatus]} style={{ fontSize: '0.75rem' }}>{statusLabelMap[item.mongodbStatus]}</span>
-              <span style={{ fontSize: '0.8rem' }}>{item.mongodbCoverageSince && item.mongodbCoverageUntil ? `${item.mongodbCoverageSince} → ${item.mongodbCoverageUntil}` : '—'}</span>
-              <button className="button button--ghost" style={{ padding: '0.25rem', fontSize: '0.75rem' }} onClick={() => setShowHistory('mongodb')}>📋</button>
-              <button className="button button--primary" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} onClick={() => mongodbSyncMutation.mutate()} disabled={mongodbSyncMutation.isPending || item.mongodbIsRunning}>同步</button>
+        <div className="flex flex-col gap-2 text-sm">
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">MongoDB:</span>
+            <div className="flex items-center gap-2">
+              <span className={`${statusClassMap[item.mongodbStatus]} text-xs`}>{statusLabelMap[item.mongodbStatus]}</span>
+              <span className="text-sm">{item.mongodbCoverageSince && item.mongodbCoverageUntil ? `${item.mongodbCoverageSince} → ${item.mongodbCoverageUntil}` : '—'}</span>
+              <button className="button button--ghost p-1 text-xs" onClick={() => setShowHistory('mongodb')}>📋</button>
+              <button className="button button--primary px-2 py-1 text-xs" onClick={() => mongodbSyncMutation.mutate()} disabled={mongodbSyncMutation.isPending || item.mongodbIsRunning}>同步</button>
             </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ color: 'var(--color-text-muted)' }}>Redis:</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span className={statusClassMap[item.redisStatus]} style={{ fontSize: '0.75rem' }}>{statusLabelMap[item.redisStatus]}</span>
-              <span style={{ fontSize: '0.8rem' }}>{item.redisCacheSince && item.redisCacheUntil ? `${item.redisCacheSince} → ${item.redisCacheUntil}` : '—'}</span>
-              <button className="button button--ghost" style={{ padding: '0.25rem', fontSize: '0.75rem' }} onClick={() => setShowHistory('redis')}>📋</button>
-              <button className="button button--success" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} onClick={() => redisSyncMutation.mutate()} disabled={redisSyncMutation.isPending || item.redisIsRunning}>同步</button>
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Redis:</span>
+            <div className="flex items-center gap-2">
+              <span className={`${statusClassMap[item.redisStatus]} text-xs`}>{statusLabelMap[item.redisStatus]}</span>
+              <span className="text-sm">{item.redisCacheSince && item.redisCacheUntil ? `${item.redisCacheSince} → ${item.redisCacheUntil}` : '—'}</span>
+              <button className="button button--ghost p-1 text-xs" onClick={() => setShowHistory('redis')}>📋</button>
+              <button className="button button--success px-2 py-1 text-xs" onClick={() => redisSyncMutation.mutate()} disabled={redisSyncMutation.isPending || item.redisIsRunning}>同步</button>
             </div>
           </div>
         </div>
@@ -356,21 +356,21 @@ const SyncAccountCard = ({ item }: { item: SyncOverviewItem }) => {
         {historyQuery.isLoading ? (
           <div>加载中...</div>
         ) : historyQuery.isError ? (
-          <div style={{ color: 'var(--color-danger)' }}>加载失败</div>
+          <div className="text-destructive">加载失败</div>
         ) : !(historyQuery.data?.items?.length) ? (
           <div>暂无历史记录</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '400px', overflow: 'auto' }}>
+          <div className="flex flex-col gap-3 max-h-[400px] overflow-auto">
             {historyQuery.data.items.map((record: SyncHistoryRecord) => (
-              <div key={record.id} style={{ padding: '0.75rem', border: '1px solid var(--color-border)', borderRadius: '0.25rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+              <div key={record.id} className="p-3 border border-border rounded">
+                <div className="flex justify-between mb-2">
                   <span className={statusClassMap[record.status]}>{statusLabelMap[record.status]}</span>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>{formatRelativeTime(record.startedAt)}</span>
+                  <span className="text-sm text-muted-foreground">{formatRelativeTime(record.startedAt)}</span>
                 </div>
-                <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                <div className="text-sm text-muted-foreground">
                   范围: {record.since} → {record.until} | 记录: {record.recordsCount} | 耗时: {record.durationSeconds ? `${(record.durationSeconds / 60).toFixed(1)}分` : '—'}
                 </div>
-                {record.errorMessage && <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--color-danger)' }}>{record.errorMessage}</div>}
+                {record.errorMessage && <div className="mt-2 text-sm text-destructive">{record.errorMessage}</div>}
               </div>
             ))}
           </div>
@@ -384,8 +384,8 @@ const SyncAccountCard = ({ item }: { item: SyncOverviewItem }) => {
 const AccountManagementPage = () => {
   return (
     <div className="page">
-      <section className="card" style={{ marginBottom: '1rem' }}>
-        <div className="card__header" style={{ borderBottom: 'none', paddingBottom: 0 }}>
+      <section className="card mb-4">
+        <div className="card__header border-b-0 pb-0">
           <div>
             <div className="card__title">账号管理</div>
             <div className="card__subtitle">管理广告账号授权和数据同步</div>

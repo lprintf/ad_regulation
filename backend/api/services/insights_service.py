@@ -1810,3 +1810,234 @@ async def _resolve_latest_synced_date(account_id_without_prefix: str) -> date | 
     if not docs:
         return None
     return docs[0].date_start.date()
+
+
+# ===== New Simplified Query Methods =====
+
+
+async def query_insights_overview(
+    account_ids: list[str],
+    since: str,
+    until: str,
+    source: Literal["mongo", "redis", "mongo_redis"] = "mongo_redis",
+) -> dict[str, Any]:
+    """
+    Query account-level overview (aggregated metrics per account).
+    Used for initial page load in the insights browser.
+
+    Args:
+        account_ids: List of ad account IDs (with or without act_ prefix)
+        since: Start date in YYYY-MM-DD format
+        until: End date in YYYY-MM-DD format
+        source: Data source (mongo, redis, or mongo_redis)
+
+    Returns:
+        Dictionary with items (per-account data), totals, and date_range
+    """
+    if not account_ids:
+        raise ValueError("account_ids cannot be empty")
+
+    # Parse dates
+    since_date = InsightsService._parse_date(since, "since date")
+    until_date = InsightsService._parse_date(until, "until date")
+    if since_date > until_date:
+        raise ValueError("since date must be on or before until date")
+
+    items: list[dict[str, Any]] = []
+    all_metrics: dict[str, float] = {}
+
+    for account_id in account_ids:
+        normalized_id = normalize_account_id(account_id)
+        account_id_without_prefix = remove_account_id_prefix(normalized_id)
+
+        # Query based on source
+        if source == "mongo":
+            result = await InsightsService.query_insights_mongo_only(
+                ad_account_id=normalized_id,
+                since=since,
+                until=until,
+                level="account",
+                time_increment=1,
+            )
+        elif source == "redis":
+            # Redis-only query (for recent data)
+            redis_insights = await _get_insights_from_redis_range(
+                account_id=normalized_id,
+                since_date=since_date,
+                until_date=until_date,
+            )
+            result = {
+                "insights": redis_insights,
+                "total_records": len(redis_insights),
+                "date_range": {"since": since, "until": until},
+            }
+        else:  # mongo_redis
+            result = await InsightsService.query_insights_mongo_redis(
+                ad_account_id=normalized_id,
+                since=since,
+                until=until,
+                level="account",
+                time_increment=1,
+            )
+
+        # Aggregate metrics for this account
+        insights = result.get("insights", [])
+        if not insights:
+            continue
+
+        account_metrics: dict[str, float] = {}
+        dates = set()
+        for insight in insights:
+            metrics = insight.get("metrics", {})
+            for key, value in metrics.items():
+                account_metrics[key] = account_metrics.get(key, 0) + (value or 0)
+                all_metrics[key] = all_metrics.get(key, 0) + (value or 0)
+            if insight.get("date"):
+                dates.add(insight["date"])
+
+        sorted_dates = sorted(dates) if dates else []
+        items.append({
+            "account_id": normalized_id,
+            "account_name": None,  # TODO: fetch from account document
+            "metrics": account_metrics,
+            "date_count": len(dates),
+            "start_date": sorted_dates[0] if sorted_dates else None,
+            "end_date": sorted_dates[-1] if sorted_dates else None,
+        })
+
+    return {
+        "items": items,
+        "totals": all_metrics if all_metrics else None,
+        "date_range": {"since": since, "until": until},
+    }
+
+
+def _infer_level_from_selection(selection: dict[str, Any]) -> str:
+    """
+    Infer the aggregation level from the first null field in the selection path.
+
+    Examples:
+        [act, null, null, null] -> campaign (aggregate campaigns under account)
+        [act, camp, null, null] -> adset (aggregate adsets under campaign)
+        [act, camp, adset, null] -> ad (aggregate ads under adset)
+    """
+    if selection.get("ad_id") is not None:
+        return "ad"  # Specific ad selected, return ad-level data
+    if selection.get("adset_id") is not None:
+        return "ad"  # Adset selected, show ads under it
+    if selection.get("campaign_id") is not None:
+        return "adset"  # Campaign selected, show adsets under it
+    return "campaign"  # Only account selected, show campaigns
+
+
+async def query_insights_drilldown(
+    selections: list[dict[str, Any]],
+    level: Literal["campaign", "adset", "ad"],
+    since: str,
+    until: str,
+    source: Literal["mongo", "redis", "mongo_redis"] = "mongo_redis",
+) -> dict[str, Any]:
+    """
+    Query insights with drilldown (entity selection paths).
+
+    Args:
+        selections: List of entity selection paths, each with account_id and optional
+                   campaign_id, adset_id, ad_id for filtering.
+        level: Target aggregation level (campaign, adset, or ad)
+        since: Start date in YYYY-MM-DD format
+        until: End date in YYYY-MM-DD format
+        source: Data source (mongo, redis, or mongo_redis)
+
+    Returns:
+        Dictionary with insights list, total_records, and date_range
+    """
+    if not selections:
+        raise ValueError("selections cannot be empty")
+
+    if level not in ("campaign", "adset", "ad"):
+        raise ValueError(f"Invalid level: {level}. Must be campaign, adset, or ad")
+
+    # Parse dates
+    since_date = InsightsService._parse_date(since, "since date")
+    until_date = InsightsService._parse_date(until, "until date")
+    if since_date > until_date:
+        raise ValueError("since date must be on or before until date")
+
+    all_insights: list[dict[str, Any]] = []
+
+    # Process each selection
+    for selection in selections:
+        account_id = selection.get("account_id")
+        if not account_id:
+            continue
+
+        normalized_id = normalize_account_id(account_id)
+
+        # Build object filter based on selection
+        object_level: str | None = None
+        object_ids: list[str] | None = None
+
+        if selection.get("adset_id"):
+            object_level = "adset"
+            object_ids = [selection["adset_id"]]
+        elif selection.get("campaign_id"):
+            object_level = "campaign"
+            object_ids = [selection["campaign_id"]]
+
+        # Query based on source
+        if source == "mongo":
+            result = await InsightsService.query_insights_mongo_only(
+                ad_account_id=normalized_id,
+                since=since,
+                until=until,
+                level=level,
+                time_increment=1,
+                object_level=object_level,
+                object_ids=object_ids,
+            )
+        elif source == "redis":
+            # Redis-only (simplified - no aggregation support)
+            redis_insights = await _get_insights_from_redis_range(
+                account_id=normalized_id,
+                since_date=since_date,
+                until_date=until_date,
+            )
+            # Filter by object_ids if specified
+            if object_level and object_ids:
+                field_name = f"{object_level}_id"
+                redis_insights = [
+                    ins for ins in redis_insights
+                    if ins.get(field_name) in object_ids
+                ]
+            result = {
+                "insights": redis_insights,
+                "total_records": len(redis_insights),
+                "date_range": {"since": since, "until": until},
+            }
+        else:  # mongo_redis
+            result = await InsightsService.query_insights_mongo_redis(
+                ad_account_id=normalized_id,
+                since=since,
+                until=until,
+                level=level,
+                time_increment=1,
+                object_level=object_level,
+                object_ids=object_ids,
+            )
+
+        all_insights.extend(result.get("insights", []))
+
+    # Sort by date and entity ID
+    all_insights = sorted(
+        all_insights,
+        key=lambda x: (
+            x.get("date", ""),
+            x.get("ad_id") or x.get("adset_id") or x.get("campaign_id") or "",
+        ),
+    )
+
+    return {
+        "insights": all_insights,
+        "total_records": len(all_insights),
+        "date_range": {"since": since, "until": until},
+    }

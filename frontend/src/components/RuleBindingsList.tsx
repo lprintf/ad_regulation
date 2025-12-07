@@ -29,16 +29,8 @@ const statusBadge: Record<string, { class: string; label: string }> = {
   pending: { class: 'badge--warning', label: '待执行' }
 }
 
-const ExecutionLogsModal = ({ 
-  bindingId, 
-  ruleName,
-  open, 
-  onClose 
-}: { 
-  bindingId: string
-  ruleName: string
-  open: boolean
-  onClose: () => void 
+const ExecutionLogsModal = ({ bindingId, ruleName, open, onClose }: { 
+  bindingId: string; ruleName: string; open: boolean; onClose: () => void 
 }) => {
   const { data, isLoading } = useQuery({
     queryKey: ['binding-executions', bindingId],
@@ -50,23 +42,16 @@ const ExecutionLogsModal = ({
   const executions = data?.executions ?? []
 
   return (
-    <Modal
-      title={`执行日志 - ${ruleName}`}
-      open={open}
-      onClose={onClose}
-      width={900}
-    >
+    <Modal title={`执行日志 - ${ruleName}`} open={open} onClose={onClose} width={900}>
       {isLoading ? (
         <div className="flex items-center justify-center gap-2 py-8">
           <Spinner size="sm" />
           <span className="text-muted-foreground">加载执行日志...</span>
         </div>
       ) : executions.length === 0 ? (
-        <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
-          暂无执行记录
-        </div>
+        <div className="py-8 text-center text-muted-foreground">暂无执行记录</div>
       ) : (
-        <div className="table-wrapper" style={{ maxHeight: '500px', overflow: 'auto' }}>
+        <div className="table-wrapper max-h-[500px] overflow-auto">
           <table className="table">
             <thead>
               <tr>
@@ -83,49 +68,35 @@ const ExecutionLogsModal = ({
                 const badge = statusBadge[log.status] || { class: 'badge--muted', label: log.status }
                 return (
                   <tr key={log.id}>
-                    <td style={{ whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
-                      {formatDateTime(log.actualStartTime)}
-                    </td>
+                    <td className="whitespace-nowrap text-sm">{formatDateTime(log.actualStartTime)}</td>
                     <td>
-                      <span className="chip chip--muted" style={{ fontSize: '0.75rem' }}>
+                      <span className="chip chip--muted text-xs">
                         {log.trigger === 'manual' ? '手动' : log.trigger === 'scheduler' ? '定时' : log.trigger}
                       </span>
                     </td>
-                    <td>
-                      <span className={`badge ${badge.class}`}>{badge.label}</span>
-                    </td>
+                    <td><span className={`badge ${badge.class}`}>{badge.label}</span></td>
                     <td>
                       {log.actions?.length ? (
-                        <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
+                        <div className="flex flex-wrap gap-1">
                           {log.actions.map((action, i) => (
-                            <span key={i} className="chip chip--primary" style={{ fontSize: '0.75rem' }}>
+                            <span key={i} className="chip chip--primary text-xs">
                               {action.type}{action.message ? `: ${action.message}` : ''}
                             </span>
                           ))}
                         </div>
-                      ) : (
-                        <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-                      )}
+                      ) : <span className="text-muted-foreground">—</span>}
                     </td>
-                    <td style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                    <td className="text-sm text-muted-foreground">
                       {log.durationMs != null ? `${log.durationMs}ms` : '—'}
                     </td>
-                    <td style={{ fontSize: '0.85rem', maxWidth: '300px' }}>
+                    <td className="text-sm max-w-[300px]">
                       {log.reasonCodes?.length ? (
-                        <div style={{ 
-                          maxHeight: '60px', 
-                          overflow: 'auto',
-                          color: log.status === 'failed' ? 'var(--color-danger)' : 'inherit'
-                        }}>
-                          {log.reasonCodes.map((r, i) => (
-                            <div key={i}>{r}</div>
-                          ))}
+                        <div className={`max-h-16 overflow-auto ${log.status === 'failed' ? 'text-destructive' : ''}`}>
+                          {log.reasonCodes.map((r, i) => <div key={i}>{r}</div>)}
                         </div>
                       ) : log.errorMessage ? (
-                        <span style={{ color: 'var(--color-danger)' }}>{log.errorMessage}</span>
-                      ) : (
-                        <span style={{ color: 'var(--color-text-muted)' }}>—</span>
-                      )}
+                        <span className="text-destructive">{log.errorMessage}</span>
+                      ) : <span className="text-muted-foreground">—</span>}
                     </td>
                   </tr>
                 )
@@ -139,13 +110,8 @@ const ExecutionLogsModal = ({
 }
 
 const RuleBindingsList = ({
-  ruleName,
-  entityId,
-  showRuleName = true,
-  showEntityId = true,
-  onBindingClick,
-  allowDelete = false,
-  allowToggle = true
+  ruleName, entityId, showRuleName = true, showEntityId = true,
+  onBindingClick, allowDelete = false, allowToggle = true
 }: RuleBindingsListProps) => {
   const queryClient = useQueryClient()
   const [selectedBinding, setSelectedBinding] = useState<RuleBinding | null>(null)
@@ -158,18 +124,13 @@ const RuleBindingsList = ({
   })
 
   const toggleMutation = useMutation({
-    mutationFn: ({ id, active }: { id: string; active: boolean }) => 
-      updateRuleBinding(id, { active }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['rule-bindings'] })
-    }
+    mutationFn: ({ id, active }: { id: string; active: boolean }) => updateRuleBinding(id, { active }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rule-bindings'] })
   })
 
   const deleteMutation = useMutation({
     mutationFn: deleteRuleBinding,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['rule-bindings'] })
-    }
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rule-bindings'] })
   })
 
   const bindings = bindingsResponse?.items ?? []
@@ -184,19 +145,11 @@ const RuleBindingsList = ({
   }
 
   if (isError) {
-    return (
-      <div style={{ padding: '1rem', color: 'var(--color-danger)' }}>
-        加载失败: {error instanceof Error ? error.message : '未知错误'}
-      </div>
-    )
+    return <div className="p-4 text-destructive">加载失败: {error instanceof Error ? error.message : '未知错误'}</div>
   }
 
   if (bindings.length === 0) {
-    return (
-      <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
-        暂无绑定记录
-      </div>
-    )
+    return <div className="py-8 text-center text-muted-foreground">暂无绑定记录</div>
   }
 
   return (
@@ -211,7 +164,7 @@ const RuleBindingsList = ({
               <th>广告账号</th>
               <th>状态</th>
               <th>更新时间</th>
-              <th style={{ width: '180px' }} />
+              <th className="w-44" />
             </tr>
           </thead>
           <tbody>
@@ -219,23 +172,12 @@ const RuleBindingsList = ({
               <tr 
                 key={binding.id}
                 onClick={() => onBindingClick?.(binding)}
-                style={{ cursor: onBindingClick ? 'pointer' : 'default' }}
+                className={onBindingClick ? 'cursor-pointer hover:bg-muted/50' : ''}
               >
-                {showRuleName && (
-                  <td>
-                    <div style={{ fontWeight: 600 }}>{binding.ruleName}</div>
-                  </td>
-                )}
+                {showRuleName && <td className="font-semibold">{binding.ruleName}</td>}
                 {showEntityId && (
                   <td>
-                    <code style={{ 
-                      background: 'var(--color-bg-secondary)', 
-                      padding: '0.15rem 0.4rem',
-                      borderRadius: '3px',
-                      fontSize: '0.85rem'
-                    }}>
-                      {binding.entityId}
-                    </code>
+                    <code className="bg-muted px-1.5 py-0.5 rounded text-sm">{binding.entityId}</code>
                   </td>
                 )}
                 <td>{entityTypeLabel[binding.entityType] || binding.entityType}</td>
@@ -245,22 +187,15 @@ const RuleBindingsList = ({
                     {binding.active ? '启用' : '停用'}
                   </span>
                 </td>
-                <td style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-                  {formatDateTime(binding.updated_at)}
-                </td>
+                <td className="text-sm text-muted-foreground">{formatDateTime(binding.updated_at)}</td>
                 <td onClick={e => e.stopPropagation()}>
-                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                    <button
-                      className="button button--secondary"
-                      style={{ padding: '4px 8px', fontSize: '0.8rem' }}
-                      onClick={() => setSelectedBinding(binding)}
-                    >
+                  <div className="flex gap-2 justify-end">
+                    <button className="button button--secondary px-2 py-1 text-xs" onClick={() => setSelectedBinding(binding)}>
                       执行日志
                     </button>
                     {allowToggle && (
                       <button
-                        className="button button--ghost"
-                        style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                        className="button button--ghost px-2 py-1 text-xs"
                         onClick={() => toggleMutation.mutate({ id: binding.id, active: !binding.active })}
                         disabled={toggleMutation.isPending}
                       >
@@ -269,13 +204,8 @@ const RuleBindingsList = ({
                     )}
                     {allowDelete && (
                       <button
-                        className="button button--ghost"
-                        style={{ padding: '4px 8px', fontSize: '0.8rem', color: 'var(--color-danger)' }}
-                        onClick={() => {
-                          if (confirm('确定删除此绑定？')) {
-                            deleteMutation.mutate(binding.id)
-                          }
-                        }}
+                        className="button button--ghost px-2 py-1 text-xs text-destructive"
+                        onClick={() => confirm('确定删除此绑定？') && deleteMutation.mutate(binding.id)}
                         disabled={deleteMutation.isPending}
                       >
                         删除

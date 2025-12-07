@@ -121,8 +121,8 @@ const SchedulerTasksTab = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
+      <div className="flex justify-between items-center mb-4">
+        <div className="text-muted-foreground text-sm">
           管理 APScheduler 调度任务的运行状态
         </div>
         <button className="button button--secondary" onClick={() => tasksQuery.refetch()} disabled={tasksQuery.isFetching}>
@@ -153,14 +153,14 @@ const SchedulerTasksTab = () => {
               {(tasksQuery.data ?? []).map(task => (
                 <tr key={task.id}>
                   <td>
-                    <div style={{ fontWeight: 600 }}>{task.name}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>命名空间：{task.namespace}</div>
-                    {task.lastError && <div style={{ color: 'var(--color-danger)', fontSize: '0.8rem' }}>{task.lastError}</div>}
+                    <div className="font-semibold">{task.name}</div>
+                    <div className="text-xs text-muted-foreground">命名空间：{task.namespace}</div>
+                    {task.lastError && <div className="text-destructive text-sm">{task.lastError}</div>}
                   </td>
                   <td>
                     <code>{task.cron}</code>
                     {summarizeMetadata(task.metadata) && (
-                      <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                      <div className="mt-1 text-xs text-muted-foreground">
                         配置：{summarizeMetadata(task.metadata)}
                       </div>
                     )}
@@ -172,14 +172,14 @@ const SchedulerTasksTab = () => {
                   </td>
                   <td>
                     <div>上次：{formatDateTime(task.lastRunAt)}</div>
-                    <div style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>下一次：{formatDateTime(task.nextRunAt)}</div>
+                    <div className="text-xs text-muted-foreground">下一次：{formatDateTime(task.nextRunAt)}</div>
                   </td>
                   <td>
                     <div>平均：{task.averageLatencyMs ?? '—'} ms</div>
-                    <div style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>峰值：{task.maxLatencyMs ?? '—'} ms</div>
+                    <div className="text-xs text-muted-foreground">峰值：{task.maxLatencyMs ?? '—'} ms</div>
                   </td>
                   <td>
-                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <div className="flex gap-2 flex-wrap">
                       <button className="button button--ghost" onClick={() => openEditForm(task)}>编辑</button>
                       <button className="button button--secondary" onClick={() => runNowMutation.mutate({ namespace: task.namespace, taskId: task.id })} disabled={runNowMutation.isPending}>
                         立即执行
@@ -197,9 +197,9 @@ const SchedulerTasksTab = () => {
       )}
 
       {editingTask && (
-        <div style={{ marginTop: '1.5rem', padding: '1rem', border: '1px solid var(--color-border)', borderRadius: '8px' }}>
-          <h4 style={{ marginBottom: '1rem' }}>编辑任务：{editingTask.name}</h4>
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <div className="mt-6 p-4 border border-border rounded-lg">
+          <h4 className="mb-4">编辑任务：{editingTask.name}</h4>
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <label className="form-label">
               <span>Cron 表达式</span>
               <input className="input" value={cronInput} onChange={e => setCronInput(e.target.value)} placeholder="cron[minute='*/30']" />
@@ -208,8 +208,8 @@ const SchedulerTasksTab = () => {
               <span>任务配置（JSON）</span>
               <textarea className="textarea" rows={4} value={metadataInput} onChange={e => setMetadataInput(e.target.value)} />
             </label>
-            {formError && <div style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{formError}</div>}
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
+            {formError && <div className="text-destructive text-sm">{formError}</div>}
+            <div className="flex gap-3">
               <button className="button button--primary" type="submit" disabled={updateTaskMutation.isPending}>保存</button>
               <button className="button button--ghost" type="button" onClick={() => setEditingTask(null)}>取消</button>
             </div>
@@ -256,7 +256,7 @@ const ExecutionLogsTab = () => {
 
   return (
     <div>
-      <div className="toolbar" style={{ marginBottom: '1rem' }}>
+      <div className="toolbar mb-4">
         <div className="toolbar__group">
           <select className="select" value={filters.ruleId} onChange={e => setFilters(prev => ({ ...prev, ruleId: e.target.value }))}>
             <option value="">全部规则</option>
@@ -305,10 +305,10 @@ const ExecutionLogsTab = () => {
             </thead>
             <tbody>
               {logItems.map(log => (
-                <tr key={log.id} onClick={() => setSelectedLog(log)} style={{ cursor: 'pointer' }}>
+                <tr key={log.id} onClick={() => setSelectedLog(log)} className="cursor-pointer">
                   <td>
-                    <div style={{ fontWeight: 600 }}>{log.ruleName}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                    <div className="font-semibold">{log.ruleName}</div>
+                    <div className="text-xs text-muted-foreground">
                       {log.bindingId ? `绑定 #${log.bindingId.slice(-8)}` : '未绑定'}
                     </div>
                   </td>
@@ -320,7 +320,7 @@ const ExecutionLogsTab = () => {
                   </td>
                   <td>
                     <div>{formatDateTime(log.actualStartTime)}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{formatRelativeTime(log.actualStartTime)}</div>
+                    <div className="text-xs text-muted-foreground">{formatRelativeTime(log.actualStartTime)}</div>
                   </td>
                   <td>{log.durationMs !== undefined ? `${(log.durationMs / 1000).toFixed(2)}s` : '—'}</td>
                   <td onClick={e => e.stopPropagation()}>
@@ -340,24 +340,24 @@ const ExecutionLogsTab = () => {
       )}
 
       {selectedLog && (
-        <div style={{ marginTop: '1.5rem', padding: '1rem', border: '1px solid var(--color-border)', borderRadius: '8px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div className="mt-6 p-4 border border-border rounded-lg">
+          <div className="flex justify-between items-center mb-4">
             <h4>执行详情 · {selectedLog.ruleName}</h4>
             <button className="button button--ghost" onClick={() => setSelectedLog(null)}>关闭</button>
           </div>
-          <div style={{ display: 'grid', gap: '1rem' }}>
+          <div className="grid gap-4">
             <div>
               <strong>状态：</strong>
-              <span className={statusBadgeClass[selectedLog.status]} style={{ marginLeft: '0.5rem' }}>
+              <span className={`${statusBadgeClass[selectedLog.status]} ml-2`}>
                 {selectedLog.status === 'success' ? '成功' : selectedLog.status === 'failed' ? '失败' : '跳过'}
               </span>
-              <span style={{ marginLeft: '1rem' }}>触发：{triggerLabels[selectedLog.trigger]}</span>
-              <span style={{ marginLeft: '1rem' }}>耗时：{selectedLog.durationMs ?? '—'}ms</span>
+              <span className="ml-4">触发：{triggerLabels[selectedLog.trigger]}</span>
+              <span className="ml-4">耗时：{selectedLog.durationMs ?? '—'}ms</span>
             </div>
             {selectedLog.errorMessage && (
               <div>
-                <strong style={{ color: 'var(--color-danger)' }}>错误信息：</strong>
-                <pre style={{ margin: '0.5rem 0', padding: '0.5rem', background: 'rgba(239,68,68,0.08)', borderRadius: '4px', color: 'var(--color-danger)', whiteSpace: 'pre-wrap' }}>
+                <strong className="text-destructive">错误信息：</strong>
+                <pre className="my-2 p-2 bg-red-500/10 rounded text-destructive whitespace-pre-wrap">
                   {selectedLog.errorMessage}
                 </pre>
               </div>
@@ -365,7 +365,7 @@ const ExecutionLogsTab = () => {
             {selectedLog.contextSnapshot && Object.keys(selectedLog.contextSnapshot).length > 0 && (
               <div>
                 <strong>上下文快照：</strong>
-                <pre style={{ margin: '0.5rem 0', padding: '0.5rem', background: 'rgba(15,23,42,0.05)', borderRadius: '4px', maxHeight: '200px', overflow: 'auto' }}>
+                <pre className="my-2 p-2 bg-slate-500/5 rounded max-h-[200px] overflow-auto">
                   {JSON.stringify(selectedLog.contextSnapshot, null, 2)}
                 </pre>
               </div>
@@ -381,8 +381,8 @@ const ExecutionLogsTab = () => {
 const SchedulerManagementPage = () => {
   return (
     <div className="page">
-      <section className="card" style={{ marginBottom: '1rem' }}>
-        <div className="card__header" style={{ borderBottom: 'none', paddingBottom: 0 }}>
+      <section className="card mb-4">
+        <div className="card__header border-b-0 pb-0">
           <div>
             <div className="card__title">调度管理</div>
             <div className="card__subtitle">管理调度任务和查看执行日志</div>

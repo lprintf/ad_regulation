@@ -575,3 +575,98 @@ class EntityTimelineResponse(BaseModel):
         ..., description="Daily metrics for the entity"
     )
     total_days: int = Field(..., description="Total number of days with data")
+
+
+# ===== New Simplified Insights API Models =====
+
+
+class InsightsOverviewRequest(BaseModel):
+    """Request model for account-level overview (initial page load)."""
+
+    account_ids: list[str] = Field(
+        ...,
+        description="List of ad account IDs to query (user must have permission)",
+        examples=[["act_123456789", "act_987654321"]],
+        min_length=1,
+    )
+    since: str = Field(
+        ...,
+        description="Start date (YYYY-MM-DD)",
+        examples=["2025-01-01"],
+    )
+    until: str = Field(
+        ...,
+        description="End date (YYYY-MM-DD)",
+        examples=["2025-01-31"],
+    )
+    source: Literal["mongo", "redis", "mongo_redis"] = Field(
+        default="mongo_redis",
+        description="Data source: mongo (historical), redis (recent), mongo_redis (hybrid)",
+    )
+
+
+class AccountOverviewItem(BaseModel):
+    """Single account overview record with aggregated metrics."""
+
+    account_id: str = Field(..., description="Ad account ID (with act_ prefix)")
+    account_name: str | None = Field(None, description="Ad account display name")
+    metrics: InsightMetrics = Field(..., description="Aggregated metrics for the account")
+    date_count: int = Field(..., description="Number of days with data")
+    start_date: str | None = Field(None, description="First date with data")
+    end_date: str | None = Field(None, description="Last date with data")
+
+
+class InsightsOverviewResponse(BaseModel):
+    """Response model for account-level overview."""
+
+    items: list[AccountOverviewItem] = Field(..., description="Per-account overview data")
+    totals: InsightMetrics | None = Field(None, description="Aggregated totals across all accounts")
+    date_range: dict[str, str] = Field(..., description="Queried date range (since, until)")
+
+
+class EntitySelection(BaseModel):
+    """Single entity selection path for drilldown queries."""
+
+    account_id: str = Field(..., description="Ad account ID (required)")
+    campaign_id: str | None = Field(None, description="Campaign ID (null = aggregate all campaigns)")
+    adset_id: str | None = Field(None, description="AdSet ID (null = aggregate all adsets)")
+    ad_id: str | None = Field(None, description="Ad ID (null = aggregate all ads)")
+
+    @field_validator("account_id")
+    @classmethod
+    def validate_account_id(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("account_id is required")
+        return v.strip()
+
+
+class InsightsDrilldownRequest(BaseModel):
+    """Request model for entity drilldown queries."""
+
+    selections: list[EntitySelection] = Field(
+        ...,
+        description="List of entity selection paths for filtering.",
+        examples=[[
+            {"account_id": "act_123", "campaign_id": "camp_456", "adset_id": None, "ad_id": None}
+        ]],
+        min_length=1,
+    )
+    level: Literal["campaign", "adset", "ad"] = Field(
+        ...,
+        description="Target aggregation level: campaign, adset, or ad",
+        examples=["ad"],
+    )
+    since: str = Field(
+        ...,
+        description="Start date (YYYY-MM-DD)",
+        examples=["2025-01-01"],
+    )
+    until: str = Field(
+        ...,
+        description="End date (YYYY-MM-DD)",
+        examples=["2025-01-31"],
+    )
+    source: Literal["mongo", "redis", "mongo_redis"] = Field(
+        default="mongo_redis",
+        description="Data source: mongo (historical), redis (recent), mongo_redis (hybrid)",
+    )

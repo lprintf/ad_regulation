@@ -30,15 +30,207 @@ from api.models.insights import (
     SyncOverviewItem,
     SyncOverviewResponse,
     SyncStatus,
+    # New simplified API models
+    InsightsOverviewRequest,
+    InsightsOverviewResponse,
+    AccountOverviewItem,
+    InsightsDrilldownRequest,
 )
 from api.models.responses import SuccessResponse
-from api.services.insights_service import InsightsService
+from api.services.insights_service import (
+    InsightsService,
+    query_insights_overview,
+    query_insights_drilldown,
+)
 from api.services.insights_sync_service import InsightsSyncService
 from api.services.entity_names_sync_service import EntityNamesSyncService
 from api.services.sync_history_service import SyncHistoryService
 from utils.account_id import normalize_account_id
 
 router = APIRouter(prefix="/insights", tags=["Insights"])
+
+
+# ===== New Simplified API Endpoints =====
+
+
+@router.get("/overview", response_model=SuccessResponse[InsightsOverviewResponse])
+async def get_insights_overview(
+    account_ids: Annotated[
+        list[str],
+        Query(
+            description="List of ad account IDs (comma-separated or multiple params)",
+            examples=["act_123456789,act_987654321"],
+        ),
+    ],
+    since: Annotated[
+        str,
+        Query(
+            description="Start date in YYYY-MM-DD format",
+            examples=["2024-01-01"],
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+        ),
+    ],
+    until: Annotated[
+        str,
+        Query(
+            description="End date in YYYY-MM-DD format",
+            examples=["2024-01-31"],
+            pattern=r"^\d{4}-\d{2}-\d{2}$",
+        ),
+    ],
+    source: Annotated[
+        str,
+        Query(
+            description="Data source: mongo, redis, or mongo_redis",
+            examples=["mongo_redis"],
+        ),
+    ] = "mongo_redis",
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[InsightsOverviewResponse]:
+    """
+    Get account-level overview with aggregated metrics per account.
+    Used for initial page load in the insights browser.
+
+    This endpoint returns aggregated data for each account without entity-level details.
+    It is faster than the drilldown endpoint and suitable for displaying account summaries.
+
+    Args:
+        account_ids: List of ad account IDs (user must have permission)
+        since: Start date in YYYY-MM-DD format
+        until: End date in YYYY-MM-DD format
+        source: Data source (mongo, redis, or mongo_redis)
+        user_id: Current user ID from X-User-Id header
+
+    Returns:
+        SuccessResponse with per-account overview and totals
+
+    Example:
+        ```
+        GET /insights/overview?account_ids=act_123,act_456&since=2024-01-01&until=2024-01-31&source=mongo_redis
+        ```
+    """
+    try:
+        if source not in ("mongo", "redis", "mongo_redis"):
+            raise ValueError(f"Invalid source: {source}. Must be mongo, redis, or mongo_redis")
+
+        result = await query_insights_overview(
+            account_ids=account_ids,
+            since=since,
+            until=until,
+            source=source,
+        )
+
+        # Convert to response models
+        items = [
+            AccountOverviewItem(
+                account_id=item["account_id"],
+                account_name=item.get("account_name"),
+                metrics=item["metrics"],
+                date_count=item["date_count"],
+                start_date=item.get("start_date"),
+                end_date=item.get("end_date"),
+            )
+            for item in result["items"]
+        ]
+
+        return SuccessResponse(
+            data=InsightsOverviewResponse(
+                items=items,
+                totals=result.get("totals"),
+                date_range=result["date_range"],
+            ),
+            message=f"Successfully retrieved overview for {len(items)} accounts",
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get insights overview: {str(e)}",
+        )
+
+
+@router.post("/drilldown", response_model=SuccessResponse[InsightsResponse])
+async def get_insights_drilldown(
+    request: InsightsDrilldownRequest,
+    user_id: Annotated[str, Depends(get_current_user)] = None,
+) -> SuccessResponse[InsightsResponse]:
+    """
+    Query insights with entity drilldown (selection paths).
+
+    Args:
+        request: Drilldown request with selections, level, date range, and source
+        user_id: Current user ID from X-User-Id header
+
+    Returns:
+        SuccessResponse with insights data at the specified level
+
+    Example:
+        ```
+        POST /insights/drilldown
+        {
+            "selections": [
+                {"account_id": "act_123", "campaign_id": null, "adset_id": null, "ad_id": null}
+            ],
+            "level": "ad",
+            "since": "2024-01-01",
+            "until": "2024-01-31",
+            "source": "mongo_redis"
+        }
+        ```
+    """
+    try:
+        # Convert Pydantic models to dicts
+        selections = [sel.model_dump() for sel in request.selections]
+
+        result = await query_insights_drilldown(
+            selections=selections,
+            level=request.level,
+            since=request.since,
+            until=request.until,
+            source=request.source,
+        )
+
+        insights_data = InsightsResponse(
+            insights=[
+                InsightRecord(
+                    ad_account_id=insight.get("ad_account_id", ""),
+                    ad_id=insight.get("ad_id") if request.level == "ad" else None,
+                    adset_id=insight.get("adset_id"),
+                    campaign_id=insight.get("campaign_id"),
+                    ad_name=insight.get("ad_name"),
+                    adset_name=insight.get("adset_name"),
+                    campaign_name=insight.get("campaign_name"),
+                    configured_status=insight.get("configured_status"),
+                    effective_status=insight.get("effective_status"),
+                    date=insight["date"],
+                    metrics=insight["metrics"],
+                )
+                for insight in result["insights"]
+            ],
+            total_records=result["total_records"],
+            date_range=result["date_range"],
+        )
+
+        return SuccessResponse(
+            data=insights_data,
+            message=f"Successfully retrieved {result['total_records']} insight records",
+        )
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get insights drilldown: {str(e)}",
+        )
 
 
 # ===== Database Query Endpoint =====

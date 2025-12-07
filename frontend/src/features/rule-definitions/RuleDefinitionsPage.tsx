@@ -303,7 +303,7 @@ const RuleDefinitionsPage = () => {
         <section className="card">
           <div className="card__header">
             <div>
-              <button className="button button--secondary" onClick={() => setSelectedRule(null)} style={{ marginBottom: '0.5rem' }}>
+              <button className="button button--secondary mb-2" onClick={() => setSelectedRule(null)}>
                 ← 返回列表
               </button>
               <div className="card__title">{selectedRule.name}</div>
@@ -327,15 +327,15 @@ const RuleDefinitionsPage = () => {
                 children: (
                   <div>
                     {selectedRule.tags && selectedRule.tags.length > 0 && (
-                      <div style={{ marginBottom: '1.5rem' }}>
-                        <h4 style={{ marginBottom: '0.5rem', color: 'var(--color-text-muted)' }}>标签</h4>
-                        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                      <div className="mb-6">
+                        <h4 className="mb-2 text-muted-foreground">标签</h4>
+                        <div className="flex flex-wrap gap-1">
                           {selectedRule.tags.map(tag => <span key={tag} className="chip chip--muted">#{tag}</span>)}
                         </div>
                       </div>
                     )}
                     <div>
-                      <h4 style={{ marginBottom: '0.75rem', color: 'var(--color-text-muted)' }}>参数配置</h4>
+                      <h4 className="mb-3 text-muted-foreground">参数配置</h4>
                       {selectedRule.parameters_schema && Object.keys(selectedRule.parameters_schema).length > 0 ? (
                         <div className="table-wrapper">
                           <table className="table">
@@ -351,13 +351,13 @@ const RuleDefinitionsPage = () => {
                             <tbody>
                               {Object.entries(selectedRule.parameters_schema).map(([key, param]) => (
                                 <tr key={key}>
-                                  <td><code style={{ background: 'var(--color-bg-secondary)', padding: '0.2rem 0.4rem', borderRadius: '3px', fontSize: '0.85rem' }}>{key}</code></td>
+                                  <td><code className="bg-muted px-1.5 py-0.5 rounded text-sm">{key}</code></td>
                                   <td>{param.label ?? key}</td>
-                                  <td><span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>{renderParameterType(param)}</span></td>
+                                  <td><span className="text-muted-foreground text-sm">{renderParameterType(param)}</span></td>
                                   <td><strong>{renderDefaultValue(param)}</strong></td>
                                   <td>
                                     <div>{param.description ?? '—'}</div>
-                                    {param.hint && <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem', marginTop: '0.25rem' }}>{param.hint}</div>}
+                                    {param.hint && <div className="text-muted-foreground text-xs mt-1">{param.hint}</div>}
                                   </td>
                                 </tr>
                               ))}
@@ -365,7 +365,7 @@ const RuleDefinitionsPage = () => {
                           </table>
                         </div>
                       ) : (
-                        <div className="empty-state" style={{ padding: '2rem' }}>此规则没有可配置参数</div>
+                        <div className="empty-state p-8">此规则没有可配置参数</div>
                       )}
                     </div>
                   </div>
@@ -376,7 +376,7 @@ const RuleDefinitionsPage = () => {
                 label: '已绑定实体',
                 children: (
                   <div>
-                    <div style={{ marginBottom: '1rem', color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
+                    <div className="mb-4 text-muted-foreground text-sm">
                       以下广告实体已绑定此规则，规则会按计划自动执行
                     </div>
                     <RuleBindingsList ruleName={selectedRule.name} showRuleName={false} showEntityId={true} allowDelete={true} allowToggle={true} />
