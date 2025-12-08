@@ -5,7 +5,8 @@ import {
   fetchAvailableRules, 
   fetchRuleConfigs, 
   createRuleConfig,
-  deleteRuleConfig,
+  archiveRuleConfig,
+  syncSystemRules,
   fetchRuleBindings,
   createRuleBinding,
   deleteRuleBinding,
@@ -46,10 +47,10 @@ const RuleDefinitionsPage = () => {
   const [cloneModalOpen, setCloneModalOpen] = useState(false)
   const [cloneTarget, setCloneTarget] = useState<RuleDefinition | RuleConfig | null>(null)
   const [cloneForm, setCloneForm] = useState<{
-    name: string
+    suffix: string
     description: string
     overrides: Record<string, any>
-  }>({ name: '', description: '', overrides: {} })
+  }>({ suffix: '', description: '', overrides: {} })
 
   // Binding tab states
   const [bindingFilters, setBindingFilters] = useState<{
@@ -76,7 +77,7 @@ const RuleDefinitionsPage = () => {
 
   const configsQuery = useQuery({
     queryKey: ['rule-configs'],
-    queryFn: () => fetchRuleConfigs(),
+    queryFn: () => fetchRuleConfigs({ includeArchived: false }),
     staleTime: 30_000
   })
 
@@ -106,7 +107,7 @@ const RuleDefinitionsPage = () => {
       queryClient.invalidateQueries({ queryKey: ['rule-configs'] })
       setCloneModalOpen(false)
       setCloneTarget(null)
-      setCloneForm({ name: '', description: '', overrides: {} })
+      setCloneForm({ suffix: '', description: '', overrides: {} })
       toast.success('规则配置创建成功')
     },
     onError: (err: any) => {
@@ -114,11 +115,20 @@ const RuleDefinitionsPage = () => {
     }
   })
 
-  const deleteConfigMutation = useMutation({
-    mutationFn: deleteRuleConfig,
+  const archiveConfigMutation = useMutation({
+    mutationFn: archiveRuleConfig,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['rule-configs'] })
-      toast.success('规则配置已删除')
+      toast.success('规则已归档')
+    }
+  })
+
+  const syncSystemRulesMutation = useMutation({
+    mutationFn: syncSystemRules,
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['rule-configs'] })
+      queryClient.invalidateQueries({ queryKey: ['available-rules'] })
+      toast.success(`已同步 ${result.synced_count} 个系统规则`)
     }
   })
 
@@ -150,12 +160,6 @@ const RuleDefinitionsPage = () => {
   const rules = rulesQuery.data ?? []
   const configs = configsQuery.data ?? []
 
-  const filteredRules = rules.filter(rule => 
-    rule.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    rule.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    rule.tags?.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()))
-  )
-
   const filteredConfigs = configs.filter(config =>
     config.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     config.base_rule.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -173,14 +177,15 @@ const RuleDefinitionsPage = () => {
   // Handlers
   const handleOpenCloneModal = (source: RuleDefinition | RuleConfig) => {
     const isConfig = 'base_rule' in source
-    const baseName = isConfig ? (source as RuleConfig).name : source.name
     const baseSchema = isConfig 
       ? (source as RuleConfig).parameters_schema 
       : source.parameters_schema
 
+    // Filter out evaluation_date from initial overrides (not allowed to override)
     const initialOverrides: Record<string, any> = {}
     if (baseSchema) {
       Object.entries(baseSchema).forEach(([key, param]) => {
+        if (key === 'evaluation_date') return  // Skip evaluation_date
         const p = param as RuleParameter
         initialOverrides[key] = p.default ?? p.defaultValue ?? ''
       })
@@ -188,7 +193,7 @@ const RuleDefinitionsPage = () => {
 
     setCloneTarget(source)
     setCloneForm({
-      name: `${baseName}_copy`,
+      suffix: 'copy',
       description: isConfig ? ((source as RuleConfig).description || '') : (source.description || ''),
       overrides: initialOverrides
     })
@@ -196,16 +201,23 @@ const RuleDefinitionsPage = () => {
   }
 
   const handleCloneSubmit = () => {
-    if (!cloneTarget || !cloneForm.name.trim()) return
+    if (!cloneTarget || !cloneForm.suffix.trim()) return
 
     const isConfig = 'base_rule' in cloneTarget
     const baseRule = isConfig ? (cloneTarget as RuleConfig).base_rule : cloneTarget.name
+    const templateId = isConfig ? (cloneTarget as RuleConfig).id : undefined
+
+    // Filter out evaluation_date from overrides
+    const filteredOverrides = Object.fromEntries(
+      Object.entries(cloneForm.overrides).filter(([key]) => key !== 'evaluation_date')
+    )
 
     const payload: RuleConfigCreate = {
-      name: cloneForm.name.trim(),
+      suffix: cloneForm.suffix.trim(),
       base_rule: baseRule,
+      template_id: templateId,  // Track clone source for version calculation
       description: cloneForm.description.trim() || undefined,
-      parameter_overrides: cloneForm.overrides
+      parameter_overrides: filteredOverrides
     }
 
     createConfigMutation.mutate(payload)
@@ -389,12 +401,28 @@ const RuleDefinitionsPage = () => {
       )
     }
 
+    // Helper to format source display
+    const formatSource = (source: string) => {
+      if (source === 'system') return { label: '系统', className: 'badge badge--info' }
+      if (source.startsWith('user:')) return { label: source.replace('user:', '用户:'), className: 'badge badge--warning' }
+      return { label: source, className: 'badge badge--muted' }
+    }
+
     return (
       <section className="card">
         <div className="card__header">
           <div>
             <div className="card__title">规则列表</div>
-            <div className="card__subtitle">查看基础规则、已绑定实体，并创建自定义参数配置</div>
+            <div className="card__subtitle">统一管理系统规则和自定义配置</div>
+          </div>
+          <div className="toolbar__group">
+            <button 
+              className="button button--secondary" 
+              onClick={() => syncSystemRulesMutation.mutate()}
+              disabled={syncSystemRulesMutation.isPending}
+            >
+              {syncSystemRulesMutation.isPending ? '同步中...' : '同步系统规则'}
+            </button>
           </div>
         </div>
 
@@ -404,100 +432,76 @@ const RuleDefinitionsPage = () => {
           </div>
         </div>
 
-        {rulesQuery.isError ? (
+        {configsQuery.isError ? (
           <div className="empty-state"><p>加载规则失败</p></div>
-        ) : rulesQuery.isLoading ? (
+        ) : configsQuery.isLoading ? (
           <div className="empty-state">加载中...</div>
+        ) : filteredConfigs.length === 0 ? (
+          <div className="empty-state">
+            <p>{searchTerm ? '没有匹配的规则' : '暂无规则，请先同步系统规则'}</p>
+          </div>
         ) : (
-          <>
-            <div style={{ padding: '0 1rem' }}>
-              <h4 style={{ margin: '1rem 0 0.5rem', color: 'var(--color-text-muted)' }}>基础规则 ({filteredRules.length})</h4>
-            </div>
-            {filteredRules.length > 0 ? (
-              <div className="table-wrapper">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>规则名称</th>
-                      <th>版本</th>
-                      <th>标签</th>
-                      <th>参数</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredRules.map(rule => (
-                      <tr key={rule.name}>
-                        <td>
-                          <div style={{ fontWeight: 600 }}>{rule.name}</div>
-                          <div style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>{rule.description ?? '未填写描述'}</div>
-                        </td>
-                        <td><span className="badge badge--published">v{rule.version}</span></td>
-                        <td>
-                          {rule.tags?.length ? (
-                            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                              {rule.tags.map(tag => <span key={tag} className="chip chip--muted">#{tag}</span>)}
-                            </div>
-                          ) : '—'}
-                        </td>
-                        <td>{rule.parameters_schema ? Object.keys(rule.parameters_schema).length : 0}</td>
-                        <td style={{ textAlign: 'right' }}>
-                          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                            <button className="button button--secondary" onClick={() => setSelectedRule(rule)}>详情</button>
-                            <button className="button button--primary" onClick={() => handleOpenCloneModal(rule)}>复制</button>
+          <div className="table-wrapper">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>规则名称</th>
+                  <th>来源</th>
+                  <th>基础规则</th>
+                  <th>版本</th>
+                  <th>标签</th>
+                  <th>参数覆盖</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {filteredConfigs.map(config => {
+                  const sourceInfo = formatSource(config.source)
+                  const isSystemRule = config.source === 'system'
+                  return (
+                    <tr key={config.id}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{config.name}</div>
+                        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>{config.description ?? '未填写描述'}</div>
+                      </td>
+                      <td><span className={sourceInfo.className}>{sourceInfo.label}</span></td>
+                      <td>
+                        {isSystemRule ? '—' : (
+                          <div>
+                            <div style={{ fontWeight: 500 }}>{config.base_rule_name || config.base_rule}</div>
+                            <div style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>{config.base_rule}</div>
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="empty-state" style={{ padding: '1rem' }}>{searchTerm ? '没有匹配的基础规则' : '暂无基础规则'}</div>
-            )}
-
-            <div style={{ padding: '0 1rem' }}>
-              <h4 style={{ margin: '1.5rem 0 0.5rem', color: 'var(--color-text-muted)' }}>自定义配置 ({filteredConfigs.length})</h4>
-            </div>
-            {configsQuery.isLoading ? (
-              <div className="empty-state" style={{ padding: '1rem' }}>加载中...</div>
-            ) : filteredConfigs.length > 0 ? (
-              <div className="table-wrapper">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>配置名称</th>
-                      <th>基础规则</th>
-                      <th>版本</th>
-                      <th>参数覆盖</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredConfigs.map(config => (
-                      <tr key={config.id}>
-                        <td>
-                          <div style={{ fontWeight: 600 }}>{config.name}</div>
-                          <div style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>{config.description ?? '未填写描述'}</div>
-                        </td>
-                        <td><code style={{ background: 'var(--color-bg-secondary)', padding: '0.2rem 0.4rem', borderRadius: '3px', fontSize: '0.85rem' }}>{config.base_rule}</code></td>
-                        <td><span className="badge badge--draft">v{config.version}</span></td>
-                        <td>{Object.keys(config.parameter_overrides).length} 个</td>
-                        <td style={{ textAlign: 'right' }}>
-                          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                            <button className="button button--secondary" onClick={() => handleOpenCloneModal(config)}>复制</button>
-                            <button className="button button--ghost" onClick={() => { if (confirm(`确定删除配置 "${config.name}"？`)) deleteConfigMutation.mutate(config.id) }}>删除</button>
+                        )}
+                      </td>
+                      <td><span className={isSystemRule ? 'badge badge--published' : 'badge badge--draft'}>v{config.version}</span></td>
+                      <td>
+                        {config.tags?.length ? (
+                          <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                            {config.tags.map(tag => <span key={tag} className="chip chip--muted">#{tag}</span>)}
                           </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="empty-state" style={{ padding: '1rem' }}>{searchTerm ? '没有匹配的自定义配置' : '暂无自定义配置'}</div>
-            )}
-          </>
+                        ) : '—'}
+                      </td>
+                      <td>{Object.keys(config.parameter_overrides).length || '—'}</td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                          <button className="button button--secondary" onClick={() => {
+                            // Find matching rule definition for detail view
+                            const ruleName = config.base_rule_name || config.name.split(':')[0]
+                            const rule = rules.find(r => r.name === ruleName)
+                            if (rule) setSelectedRule(rule)
+                          }}>详情</button>
+                          <button className="button button--primary" onClick={() => handleOpenCloneModal(config)}>复制</button>
+                          {!isSystemRule && (
+                            <button className="button button--ghost" onClick={() => { if (confirm(`确定归档规则 "${config.name}"？归档后规则将被隐藏但不会删除。`)) archiveConfigMutation.mutate(config.id) }}>归档</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     )
@@ -692,48 +696,62 @@ const RuleDefinitionsPage = () => {
           </>
         }
       >
-        {cloneTarget && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <div>
-              <label className="form-label">
-                <span>配置名称 *</span>
-                <input className="input" value={cloneForm.name} onChange={e => setCloneForm(prev => ({ ...prev, name: e.target.value }))} placeholder="例如：ml_auto_stop_conservative" />
-              </label>
-            </div>
-            <div>
-              <label className="form-label">
-                <span>描述</span>
-                <input className="input" value={cloneForm.description} onChange={e => setCloneForm(prev => ({ ...prev, description: e.target.value }))} placeholder="描述此配置的用途" />
-              </label>
-            </div>
-            <div>
-              <h4 style={{ marginBottom: '0.75rem' }}>参数配置</h4>
-              <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', maxHeight: '300px', overflow: 'auto' }}>
-                <table className="table" style={{ margin: 0 }}>
-                  <thead>
-                    <tr>
-                      <th>参数</th>
-                      <th>类型</th>
-                      <th>值</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries('base_rule' in cloneTarget ? (cloneTarget as RuleConfig).parameters_schema : (cloneTarget.parameters_schema || {})).map(([key, param]) => (
-                      <tr key={key}>
-                        <td>
-                          <div style={{ fontWeight: 500 }}>{(param as RuleParameter).label || key}</div>
-                          <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{(param as RuleParameter).description}</div>
-                        </td>
-                        <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>{renderParameterType(param as RuleParameter)}</td>
-                        <td style={{ width: '200px' }}>{renderParameterInput(key, param as RuleParameter)}</td>
+        {cloneTarget && (() => {
+          const isConfig = 'base_rule' in cloneTarget
+          const baseRule = isConfig ? (cloneTarget as RuleConfig).base_rule : cloneTarget.name
+          const previewName = `${baseRule}:{user_id}:${cloneForm.suffix || '...'}`
+          
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div>
+                <label className="form-label">
+                  <span>规则后缀 *</span>
+                  <input className="input" value={cloneForm.suffix} onChange={e => setCloneForm(prev => ({ ...prev, suffix: e.target.value }))} placeholder="例如：conservative, aggressive" />
+                </label>
+                <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>
+                  最终名称: <code style={{ background: 'var(--color-bg-secondary)', padding: '0.1rem 0.3rem', borderRadius: '3px' }}>{previewName}</code>
+                </div>
+              </div>
+              <div>
+                <label className="form-label">
+                  <span>描述</span>
+                  <input className="input" value={cloneForm.description} onChange={e => setCloneForm(prev => ({ ...prev, description: e.target.value }))} placeholder="描述此配置的用途" />
+                </label>
+              </div>
+              <div>
+                <h4 style={{ marginBottom: '0.75rem' }}>参数配置</h4>
+                <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+                  注意: evaluation_date 参数不可覆盖
+                </div>
+                <div style={{ border: '1px solid var(--color-border)', borderRadius: '6px', maxHeight: '300px', overflow: 'auto' }}>
+                  <table className="table" style={{ margin: 0 }}>
+                    <thead>
+                      <tr>
+                        <th>参数</th>
+                        <th>类型</th>
+                        <th>值</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {Object.entries(isConfig ? (cloneTarget as RuleConfig).parameters_schema : (cloneTarget.parameters_schema || {}))
+                        .filter(([key]) => key !== 'evaluation_date')  // Filter out evaluation_date
+                        .map(([key, param]) => (
+                          <tr key={key}>
+                            <td>
+                              <div style={{ fontWeight: 500 }}>{(param as RuleParameter).label || key}</div>
+                              <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{(param as RuleParameter).description}</div>
+                            </td>
+                            <td style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>{renderParameterType(param as RuleParameter)}</td>
+                            <td style={{ width: '200px' }}>{renderParameterInput(key, param as RuleParameter)}</td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
       </Modal>
     </div>
   )

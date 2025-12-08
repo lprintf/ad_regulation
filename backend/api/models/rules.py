@@ -199,17 +199,29 @@ class RuleExecutionListResponse(BaseModel):
     total: int
 
 
-# ===== Rule Config Models (for cloning rules with modified parameters) =====
+# ===== Rule Config Models (Unified rule model) =====
+
+
+class RuleSource(str, Enum):
+    """来源类型"""
+    SYSTEM = "system"  # 基础规则（来自代码注册表）
+    # 用户自定义规则使用 "user:{user_id}" 格式
 
 
 class RuleConfigCreate(BaseModel):
-    """Create a new rule configuration (clone with modified parameters)"""
-    name: str = Field(..., description="Unique config name, e.g. 'ml_auto_stop_conservative'")
+    """Create a new rule configuration (clone from base rule or another config)
+    
+    命名规则: {base_rule}:{user_id}:{suffix}
+    - 从系统规则复制: ml_auto_stop:user123:conservative
+    - 从用户规则复制: ml_auto_stop:user456:aggressive (只修改user_id和suffix)
+    """
+    suffix: str = Field(..., description="User-defined suffix for the rule name")
     base_rule: str = Field(..., description="Base rule name from registry")
+    template_id: str | None = Field(default=None, description="Template rule ID to clone from")
     description: str | None = None
     parameter_overrides: dict[str, Any] = Field(
         default_factory=dict,
-        description="Override default values in parameters_schema"
+        description="Override default values in parameters_schema (evaluation_date will be excluded)"
     )
     tags: list[str] = Field(default_factory=list)
     created_by: str | None = None
@@ -224,18 +236,32 @@ class RuleConfigUpdate(BaseModel):
     updated_by: str | None = None
 
 
+class RuleConfigArchive(BaseModel):
+    """Archive a rule configuration (instead of delete)"""
+    updated_by: str | None = None
+
+
 class RuleConfigResponse(BaseModel):
-    """Rule configuration response"""
+    """Rule configuration response - unified model for base and custom rules"""
     id: str
     name: str
-    base_rule: str
+    base_rule: str  # ID of the base system rule
+    base_rule_name: str | None = None  # Name of the base system rule (for display)
     description: str | None = None
     version: str
+    
+    # Source tracking
+    template_id: str | None = None  # None = base rule, otherwise = cloned from
+    source: str = "system"  # "system" or "user:{user_id}"
+    
     parameter_overrides: dict[str, Any] = Field(default_factory=dict)
     # Merged parameters_schema (base + overrides)
     parameters_schema: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
+    
     is_active: bool = True
+    is_archived: bool = False  # Archived rules are hidden but not deleted
+    
     created_by: str | None = None
     updated_by: str | None = None
     created_at: datetime

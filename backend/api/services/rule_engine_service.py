@@ -19,6 +19,7 @@ from api.models.rules import (
     RuleBindingCreate,
     RuleBindingResponse,
     RuleBindingUpdate,
+    RuleConfigArchive,
     RuleConfigClone,
     RuleConfigCreate,
     RuleConfigResponse,
@@ -109,10 +110,19 @@ def _merge_parameters_schema(
     return merged
 
 
-def _serialize_config(doc: RuleConfigDocument) -> RuleConfigResponse:
+async def _serialize_config(doc: RuleConfigDocument) -> RuleConfigResponse:
     """Serialize RuleConfigDocument to response model."""
-    # Get base rule's parameters_schema
-    base_meta = get_rule_metadata(doc.base_rule)
+    # Resolve base_rule_name
+    # For system rules: base_rule == name (the rule name itself)
+    # For user rules: base_rule is the ID of the system rule
+    if doc.source == "system":
+        base_rule_name = doc.name
+        base_meta = get_rule_metadata(doc.name)
+    else:
+        # base_rule is an ID, need to look up the system rule
+        base_rule_name = doc.name.split(":")[0] if ":" in doc.name else doc.base_rule
+        base_meta = get_rule_metadata(base_rule_name)
+    
     base_schema = base_meta.get("parameters_schema", {}) if base_meta else {}
 
     # Merge with overrides
@@ -122,12 +132,16 @@ def _serialize_config(doc: RuleConfigDocument) -> RuleConfigResponse:
         id=str(doc.id),
         name=doc.name,
         base_rule=doc.base_rule,
+        base_rule_name=base_rule_name,
         description=doc.description,
         version=doc.version,
+        template_id=doc.template_id,
+        source=doc.source,
         parameter_overrides=doc.parameter_overrides,
         parameters_schema=merged_schema,
         tags=doc.tags,
         is_active=doc.is_active,
+        is_archived=doc.is_archived,
         created_by=doc.created_by,
         updated_by=doc.updated_by,
         created_at=doc.created_at,
@@ -162,56 +176,166 @@ class RuleEngineService:
         """Get metadata for a specific rule."""
         return get_rule_metadata(rule_name)
 
+    @staticmethod
+    async def sync_system_rules() -> int:
+        """
+        Sync system rules from code registry to database.
+        Creates or updates RuleConfigDocument for each registered rule.
+        Returns the number of rules synced.
+        """
+        rules = registry_list_rules()
+        synced = 0
+        
+        for rule_meta in rules:
+            rule_name = rule_meta.get("name")
+            if not rule_name:
+                continue
+            
+            # Check if system rule already exists
+            existing = await RuleConfigDocument.find_one(
+                RuleConfigDocument.name == rule_name,
+                RuleConfigDocument.source == "system"
+            )
+            
+            now = datetime.utcnow()
+            
+            if existing:
+                # Update existing system rule
+                existing.description = rule_meta.get("description")
+                existing.version = rule_meta.get("version", "1.0.0")
+                existing.tags = rule_meta.get("tags", [])
+                existing.updated_at = now
+                await existing.save()
+            else:
+                # Create new system rule
+                config = RuleConfigDocument(
+                    name=rule_name,
+                    base_rule=rule_name,
+                    description=rule_meta.get("description"),
+                    version=rule_meta.get("version", "1.0.0"),
+                    template_id=None,  # System rules have no template
+                    source="system",
+                    parameter_overrides={},  # System rules use defaults
+                    tags=rule_meta.get("tags", []),
+                    is_active=True,
+                    is_archived=False,
+                    created_by="system",
+                    updated_by="system",
+                    created_at=now,
+                    updated_at=now,
+                )
+                await config.insert()
+            
+            synced += 1
+            logger.debug("Synced system rule '%s' to database", rule_name)
+        
+        logger.info("Synced %d system rules to database", synced)
+        return synced
+
     # ===== Rule Config Management (Clone with modified parameters) =====
 
     @staticmethod
     async def create_config(data: RuleConfigCreate) -> RuleConfigResponse:
-        """Create a new rule configuration (clone rule with modified parameters)."""
-        # Validate base rule exists
-        base_meta = get_rule_metadata(data.base_rule)
+        """Create a new rule configuration (clone from base rule or another config).
+        
+        命名规则: {base_rule_name}:{user_id}:{suffix}
+        - base_rule 存储系统规则的 ID
+        - evaluation_date 参数不可覆盖，永远为空
+        - 默认复制模板规则的标签
+        """
+        # template_id is required - must clone from an existing rule
+        if not data.template_id:
+            raise ValueError("template_id is required - must clone from an existing rule")
+        
+        # Get template rule
+        template_doc = await RuleConfigDocument.get(_to_object_id(data.template_id))
+        if template_doc is None:
+            raise ValueError(f"Template rule '{data.template_id}' not found")
+        
+        # Get the base rule name for naming (traverse to system rule if needed)
+        base_rule_id = template_doc.base_rule if template_doc.source != "system" else str(template_doc.id)
+        base_rule_name = template_doc.name.split(":")[0] if ":" in template_doc.name else template_doc.name
+        
+        # Validate base rule exists in registry
+        base_meta = get_rule_metadata(base_rule_name)
         if base_meta is None:
-            raise ValueError(f"Base rule '{data.base_rule}' not found in registry")
+            raise ValueError(f"Base rule '{base_rule_name}' not found in registry")
+
+        # Build rule name: {base_rule_name}:{user_id}:{suffix}
+        user_id = data.created_by or "unknown"
+        rule_name = f"{base_rule_name}:{user_id}:{data.suffix}"
 
         # Check name uniqueness
         existing = await RuleConfigDocument.find_one(
-            RuleConfigDocument.name == data.name
+            RuleConfigDocument.name == rule_name
         )
         if existing:
-            raise ValueError(f"Config name '{data.name}' already exists")
+            raise ValueError(f"Config name '{rule_name}' already exists")
+
+        # Filter out evaluation_date from parameter_overrides (always empty)
+        filtered_overrides = {
+            k: v for k, v in data.parameter_overrides.items() 
+            if k != "evaluation_date"
+        }
 
         # Validate parameter_overrides keys exist in base schema
         base_schema = base_meta.get("parameters_schema", {})
-        for key in data.parameter_overrides.keys():
+        for key in filtered_overrides.keys():
             if key not in base_schema:
                 logger.warning(f"Parameter override key '{key}' not in base schema, skipping validation")
 
+        # Determine version based on template
+        template_version = template_doc.version
+        version = _increment_version(template_version)
+
+        # Determine source
+        source = f"user:{user_id}"
+
+        # Copy tags from template if not provided
+        tags = data.tags if data.tags else list(template_doc.tags)
+
         now = datetime.utcnow()
         config = RuleConfigDocument(
-            name=data.name,
-            base_rule=data.base_rule,
-            description=data.description,
-            version="1.0.0",
-            parameter_overrides=data.parameter_overrides,
-            tags=data.tags,
+            name=rule_name,
+            base_rule=base_rule_id,  # Store ID, not name
+            description=data.description or template_doc.description,
+            version=version,
+            template_id=data.template_id,
+            source=source,
+            parameter_overrides=filtered_overrides,
+            tags=tags,
             created_by=data.created_by,
             updated_by=data.created_by,
             created_at=now,
             updated_at=now,
         )
         await config.insert()
-        logger.info("Created rule config '%s' based on '%s'", config.name, config.base_rule)
-        return _serialize_config(config)
+        logger.info("Created rule config '%s' based on template '%s' (v%s, source=%s)", 
+                   config.name, template_doc.name, config.version, config.source)
+        return await _serialize_config(config)
 
     @staticmethod
-    async def list_configs(base_rule: str | None = None) -> list[RuleConfigResponse]:
-        """List rule configurations, optionally filtered by base rule."""
+    async def list_configs(
+        base_rule: str | None = None,
+        include_archived: bool = False,
+        source: str | None = None,
+    ) -> list[RuleConfigResponse]:
+        """List rule configurations, optionally filtered by base rule and source."""
         filters = []
         if base_rule:
             filters.append(RuleConfigDocument.base_rule == base_rule)
+        if not include_archived:
+            filters.append(RuleConfigDocument.is_archived == False)  # noqa: E712
+        if source:
+            if source == "system":
+                filters.append(RuleConfigDocument.source == "system")
+            elif source == "user":
+                # Match any user source (starts with "user:")
+                filters.append(RuleConfigDocument.source != "system")
 
         cursor = RuleConfigDocument.find(*filters) if filters else RuleConfigDocument.find({})
         docs = await cursor.to_list()
-        return [_serialize_config(doc) for doc in docs]
+        return [await _serialize_config(doc) for doc in docs]
 
     @staticmethod
     async def get_config(config_id: str) -> RuleConfigResponse:
@@ -219,7 +343,7 @@ class RuleEngineService:
         doc = await RuleConfigDocument.get(_to_object_id(config_id))
         if doc is None:
             raise ValueError("Config not found")
-        return _serialize_config(doc)
+        return await _serialize_config(doc)
 
     @staticmethod
     async def get_config_by_name(name: str) -> RuleConfigResponse:
@@ -227,7 +351,7 @@ class RuleEngineService:
         doc = await RuleConfigDocument.find_one(RuleConfigDocument.name == name)
         if doc is None:
             raise ValueError(f"Config '{name}' not found")
-        return _serialize_config(doc)
+        return await _serialize_config(doc)
 
     @staticmethod
     async def update_config(config_id: str, data: RuleConfigUpdate) -> RuleConfigResponse:
@@ -258,7 +382,7 @@ class RuleEngineService:
             await doc.save()
             logger.info("Updated rule config '%s' (v%s)", doc.name, doc.version)
 
-        return _serialize_config(doc)
+        return await _serialize_config(doc)
 
     @staticmethod
     async def clone_config(config_id: str, data: RuleConfigClone) -> RuleConfigResponse:
@@ -278,12 +402,20 @@ class RuleEngineService:
         merged_overrides = dict(original.parameter_overrides)
         merged_overrides.update(data.parameter_overrides)
 
+        # Increment version based on original
+        version = _increment_version(original.version)
+
+        # Determine source
+        source = f"user:{data.created_by}" if data.created_by else "user:unknown"
+
         now = datetime.utcnow()
         cloned = RuleConfigDocument(
             name=data.new_name,
             base_rule=original.base_rule,
             description=data.description or original.description,
-            version="1.0.0",  # Reset version for clone
+            version=version,
+            template_id=str(original.id),  # Track clone source
+            source=source,
             parameter_overrides=merged_overrides,
             tags=original.tags,
             created_by=data.created_by,
@@ -292,17 +424,47 @@ class RuleEngineService:
             updated_at=now,
         )
         await cloned.insert()
-        logger.info("Cloned config '%s' to '%s'", original.name, cloned.name)
-        return _serialize_config(cloned)
+        logger.info("Cloned config '%s' to '%s' (v%s, source=%s)", 
+                   original.name, cloned.name, cloned.version, cloned.source)
+        return await _serialize_config(cloned)
+
+    @staticmethod
+    async def archive_config(config_id: str, data: RuleConfigArchive | None = None) -> RuleConfigResponse:
+        """Archive a rule configuration (soft delete - rules cannot be deleted)."""
+        doc = await RuleConfigDocument.get(_to_object_id(config_id))
+        if doc is None:
+            raise ValueError("Config not found")
+        
+        # Don't allow archiving system rules
+        if doc.source == "system":
+            raise ValueError("Cannot archive system rules")
+        
+        doc.is_archived = True
+        doc.is_active = False
+        doc.updated_at = datetime.utcnow()
+        if data and data.updated_by:
+            doc.updated_by = data.updated_by
+        await doc.save()
+        logger.info("Archived rule config '%s'", doc.name)
+        return await _serialize_config(doc)
 
     @staticmethod
     async def delete_config(config_id: str) -> None:
-        """Delete a rule configuration."""
+        """Delete is replaced by archive - this method now archives instead."""
         doc = await RuleConfigDocument.get(_to_object_id(config_id))
         if doc is None:
             return
-        await doc.delete()
-        logger.info("Deleted rule config '%s'", doc.name)
+        
+        # Don't allow deleting system rules
+        if doc.source == "system":
+            raise ValueError("Cannot delete system rules, use archive instead")
+        
+        # Archive instead of delete
+        doc.is_archived = True
+        doc.is_active = False
+        doc.updated_at = datetime.utcnow()
+        await doc.save()
+        logger.info("Archived (soft-deleted) rule config '%s'", doc.name)
 
     # ===== Binding management =====
 

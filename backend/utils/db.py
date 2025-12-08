@@ -87,16 +87,33 @@ class RuleDefinitionDocument(Document):
 
 class RuleConfigDocument(Document):
     """
-    规则配置（变体）- 存储基于代码规则的参数覆盖
-    允许用户"复制"规则并修改默认参数，而不需要修改代码
+    统一规则模型 - 存储基础规则元数据和用户自定义配置
+    
+    基础规则（来自代码注册表）：
+    - template_id = None, source = "system"
+    - 由系统在启动时同步到数据库
+    
+    自定义配置（用户复制）：
+    - template_id = 被复制对象的 ID
+    - source = "user:{user_id}"
+    - version 在模板版本基础上修复号+1
     """
-    name: str  # 配置名称，如 "ml_auto_stop_conservative"
-    base_rule: str  # 基础规则名，如 "ml_auto_stop"
+    name: str  # 规则名称，如 "ml_auto_stop" 或 "ml_auto_stop_conservative"
+    base_rule: str  # 基础规则名（代码注册表中的规则名）
     description: str | None = None
-    version: str = Field(default="1.0.0")  # 修订号
+    version: str = Field(default="1.0.0")  # 语义版本号
+    
+    # 来源追踪
+    template_id: str | None = None  # 模板ID，None表示基础规则
+    source: str = "system"  # 来源：system 或 user:{user_id}
+    
     parameter_overrides: dict[str, Any] = Field(default_factory=dict)  # 参数覆盖
     tags: list[str] = Field(default_factory=list)
+    
+    # 状态管理
     is_active: bool = True
+    is_archived: bool = False  # 归档状态（替代删除）
+    
     created_by: str | None = None
     updated_by: str | None = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -107,7 +124,10 @@ class RuleConfigDocument(Document):
         indexes = [
             IndexModel("name", unique=True),
             IndexModel("base_rule"),
+            IndexModel("template_id"),
+            IndexModel("source"),
             IndexModel("tags"),
+            IndexModel("is_archived"),
         ]
 
 

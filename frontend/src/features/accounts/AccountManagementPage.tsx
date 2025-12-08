@@ -130,15 +130,7 @@ const AuthRecordsTab = () => {
     return { className: 'badge badge--success', label: '有效' }
   }
 
-  const accountRows = useMemo(() => {
-    const rows: { account: FbAdAccount; app: Pick<FbAppAuthRecord, 'appId' | 'application' | 'accessTokenLast4'> }[] = []
-    for (const record of records ?? []) {
-      for (const account of record.accounts) {
-        rows.push({ account, app: { appId: record.appId, application: record.application, accessTokenLast4: record.accessTokenLast4 } })
-      }
-    }
-    return rows
-  }, [records])
+
 
   return (
     <div>
@@ -213,36 +205,96 @@ const AuthRecordsTab = () => {
             </table>
           </div>
 
-          <h4 className="mt-6 mb-2 text-muted-foreground">广告账户映射 ({accountRows.length})</h4>
-          <div className="table-wrapper">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>广告账户</th>
-                  <th>关联应用</th>
-                  <th>Access Token</th>
-                </tr>
-              </thead>
-              <tbody>
-                {accountRows.map(({ account, app }) => (
-                  <tr key={`${account.id}-${app.appId}`}>
-                    <td>
-                      <div className="font-semibold">{account.name}</div>
-                      <div className="text-muted-foreground text-sm">{account.id}</div>
-                    </td>
-                    <td>{app.application ?? '未命名'}</td>
-                    <td>...{app.accessTokenLast4}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+
         </>
       )}
 
       <Modal title={`添加 ${channelConfig[selectedChannel].label} 授权`} open={authModalOpen} onClose={() => setAuthModalOpen(false)} width={500}>
         <AuthorizationPanel channel={selectedChannel} onClose={() => setAuthModalOpen(false)} />
       </Modal>
+    </div>
+  )
+}
+
+// ===== Ad Account Mapping Tab =====
+const AdAccountMappingTab = () => {
+  const { data: records, isLoading, refetch, isFetching } = useQuery({
+    queryKey: ['fb-app-tokens'],
+    queryFn: fetchFbAppTokens,
+    staleTime: 30_000
+  })
+
+  const accountRows = useMemo(() => {
+    const rows: { account: FbAdAccount; app: Pick<FbAppAuthRecord, 'appId' | 'application' | 'accessTokenLast4' | 'userName' | 'userId' | 'lastSyncedAt'> }[] = []
+    for (const record of records ?? []) {
+      for (const account of record.accounts) {
+        rows.push({
+          account,
+          app: {
+            appId: record.appId,
+            application: record.application,
+            accessTokenLast4: record.accessTokenLast4,
+            userName: record.userName,
+            userId: record.userId,
+            lastSyncedAt: record.lastSyncedAt
+          }
+        })
+      }
+    }
+    return rows
+  }, [records])
+
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-4">
+        <div className="text-muted-foreground text-sm">广告账户与授权应用的关联关系</div>
+        <button className="button button--secondary" onClick={() => refetch()} disabled={isFetching}>
+          {isFetching ? '刷新中...' : '刷新'}
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="empty-state">加载中...</div>
+      ) : accountRows.length === 0 ? (
+        <div className="empty-state">暂无广告账户，请先在「账号授权」中添加授权</div>
+      ) : (
+        <div className="table-wrapper">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>广告账户</th>
+                <th>App 名称</th>
+                <th>授权用户</th>
+                <th>App ID</th>
+                <th>Access Token</th>
+                <th>最后同步</th>
+              </tr>
+            </thead>
+            <tbody>
+              {accountRows.map(({ account, app }) => (
+                <tr key={`${account.id}-${app.appId}`}>
+                  <td>
+                    <div className="font-semibold">{account.name}</div>
+                    <div className="text-muted-foreground text-sm">{account.id}</div>
+                  </td>
+                  <td>{app.application ?? '未命名'}</td>
+                  <td>{app.userName ?? app.userId ?? '—'}</td>
+                  <td className="text-muted-foreground text-sm">{app.appId}</td>
+                  <td>...{app.accessTokenLast4}</td>
+                  <td>
+                    {app.lastSyncedAt ? (
+                      <div>
+                        <div className="text-sm">{formatDateTime(app.lastSyncedAt)}</div>
+                        <div className="text-xs text-muted-foreground">{formatRelativeTime(app.lastSyncedAt)}</div>
+                      </div>
+                    ) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
@@ -263,10 +315,35 @@ const statusLabelMap: Record<InsightSyncStatus, string> = {
 }
 
 const SyncStatusTab = () => {
+  const queryClient = useQueryClient()
+  const [showHistory, setShowHistory] = useState<{ accountId: string; accountName: string; type: 'mongodb' | 'redis' } | null>(null)
+
   const overviewQuery = useQuery({
     queryKey: ['sync-overview'],
     queryFn: fetchSyncOverview,
     refetchInterval: 30_000
+  })
+
+  const historyQuery = useQuery({
+    queryKey: ['sync-history', showHistory?.accountId, showHistory?.type],
+    queryFn: () => fetchSyncHistory({ accountId: showHistory!.accountId, dataTarget: showHistory!.type, page: 1, pageSize: 10 }),
+    enabled: !!showHistory
+  })
+
+  const mongodbSyncMutation = useMutation({
+    mutationFn: (accountId: string) => triggerMongodbSync(accountId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sync-overview'] })
+      queryClient.invalidateQueries({ queryKey: ['sync-history'] })
+    }
+  })
+
+  const redisSyncMutation = useMutation({
+    mutationFn: (accountId: string) => triggerRedisSync(accountId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sync-overview'] })
+      queryClient.invalidateQueries({ queryKey: ['sync-history'] })
+    }
   })
 
   const items: SyncOverviewItem[] = overviewQuery.data?.items ?? []
@@ -287,72 +364,46 @@ const SyncStatusTab = () => {
       ) : items.length === 0 ? (
         <div className="empty-state">暂无账号数据</div>
       ) : (
-        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(350px, 1fr))' }}>
-          {items.map(item => <SyncAccountCard key={item.accountId} item={item} />)}
+        <div className="table-wrapper">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>广告账户</th>
+                <th>MongoDB 状态</th>
+                <th>Redis 状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(item => (
+                <tr key={item.accountId}>
+                  <td>
+                    <div className="font-semibold">{item.accountName || item.accountId}</div>
+                    <div className="text-muted-foreground text-sm">{item.accountId}</div>
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <span className={`${statusClassMap[item.mongodbStatus]} text-xs`}>{statusLabelMap[item.mongodbStatus]}</span>
+                      <span className="text-sm text-muted-foreground">{item.mongodbCoverageSince && item.mongodbCoverageUntil ? `${item.mongodbCoverageSince} → ${item.mongodbCoverageUntil}` : '—'}</span>
+                      <button className="button button--ghost p-1 text-xs" onClick={() => setShowHistory({ accountId: item.accountId, accountName: item.accountName || item.accountId, type: 'mongodb' })}>历史</button>
+                      <button className="button button--primary px-2 py-1 text-xs" onClick={() => mongodbSyncMutation.mutate(item.accountId)} disabled={mongodbSyncMutation.isPending || item.mongodbIsRunning}>同步</button>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="flex items-center gap-2">
+                      <span className={`${statusClassMap[item.redisStatus]} text-xs`}>{statusLabelMap[item.redisStatus]}</span>
+                      <span className="text-sm text-muted-foreground">{item.redisCacheSince && item.redisCacheUntil ? `${item.redisCacheSince} → ${item.redisCacheUntil}` : '—'}</span>
+                      <button className="button button--ghost p-1 text-xs" onClick={() => setShowHistory({ accountId: item.accountId, accountName: item.accountName || item.accountId, type: 'redis' })}>历史</button>
+                      <button className="button button--primary px-2 py-1 text-xs" onClick={() => redisSyncMutation.mutate(item.accountId)} disabled={redisSyncMutation.isPending || item.redisIsRunning}>同步</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
-    </div>
-  )
-}
 
-const SyncAccountCard = ({ item }: { item: SyncOverviewItem }) => {
-  const queryClient = useQueryClient()
-  const [showHistory, setShowHistory] = useState<'mongodb' | 'redis' | null>(null)
-
-  const mongodbSyncMutation = useMutation({
-    mutationFn: () => triggerMongodbSync(item.accountId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sync-overview'] })
-      queryClient.invalidateQueries({ queryKey: ['sync-history'] })
-    }
-  })
-
-  const redisSyncMutation = useMutation({
-    mutationFn: () => triggerRedisSync(item.accountId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['sync-overview'] })
-      queryClient.invalidateQueries({ queryKey: ['sync-history'] })
-    }
-  })
-
-  const historyQuery = useQuery({
-    queryKey: ['sync-history', item.accountId, showHistory],
-    queryFn: () => fetchSyncHistory({ accountId: item.accountId, dataTarget: showHistory!, page: 1, pageSize: 10 }),
-    enabled: !!showHistory
-  })
-
-  return (
-    <>
-      <div className="border border-border rounded-lg p-4 bg-card">
-        <div className="font-semibold mb-3">
-          {item.accountName || item.accountId}
-          <div className="text-xs text-muted-foreground font-normal">{item.accountId}</div>
-        </div>
-
-        <div className="flex flex-col gap-2 text-sm">
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">MongoDB:</span>
-            <div className="flex items-center gap-2">
-              <span className={`${statusClassMap[item.mongodbStatus]} text-xs`}>{statusLabelMap[item.mongodbStatus]}</span>
-              <span className="text-sm">{item.mongodbCoverageSince && item.mongodbCoverageUntil ? `${item.mongodbCoverageSince} → ${item.mongodbCoverageUntil}` : '—'}</span>
-              <button className="button button--ghost p-1 text-xs" onClick={() => setShowHistory('mongodb')}>📋</button>
-              <button className="button button--primary px-2 py-1 text-xs" onClick={() => mongodbSyncMutation.mutate()} disabled={mongodbSyncMutation.isPending || item.mongodbIsRunning}>同步</button>
-            </div>
-          </div>
-
-          <div className="flex justify-between items-center">
-            <span className="text-muted-foreground">Redis:</span>
-            <div className="flex items-center gap-2">
-              <span className={`${statusClassMap[item.redisStatus]} text-xs`}>{statusLabelMap[item.redisStatus]}</span>
-              <span className="text-sm">{item.redisCacheSince && item.redisCacheUntil ? `${item.redisCacheSince} → ${item.redisCacheUntil}` : '—'}</span>
-              <button className="button button--ghost p-1 text-xs" onClick={() => setShowHistory('redis')}>📋</button>
-              <button className="button button--success px-2 py-1 text-xs" onClick={() => redisSyncMutation.mutate()} disabled={redisSyncMutation.isPending || item.redisIsRunning}>同步</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <Modal title={`${showHistory === 'mongodb' ? 'MongoDB' : 'Redis'} 同步历史 - ${item.accountName || item.accountId}`} open={!!showHistory} onClose={() => setShowHistory(null)} width={700}>
+      <Modal title={`${showHistory?.type === 'mongodb' ? 'MongoDB' : 'Redis'} 同步历史 - ${showHistory?.accountName}`} open={!!showHistory} onClose={() => setShowHistory(null)} width={700}>
         {historyQuery.isLoading ? (
           <div>加载中...</div>
         ) : historyQuery.isError ? (
@@ -376,7 +427,7 @@ const SyncAccountCard = ({ item }: { item: SyncOverviewItem }) => {
           </div>
         )}
       </Modal>
-    </>
+    </div>
   )
 }
 
@@ -397,6 +448,7 @@ const AccountManagementPage = () => {
         defaultActiveKey="auth"
         items={[
           { key: 'auth', label: '账号授权', children: <AuthRecordsTab /> },
+          { key: 'mapping', label: '广告账户', children: <AdAccountMappingTab /> },
           { key: 'sync', label: '数据同步', children: <SyncStatusTab /> }
         ]}
       />

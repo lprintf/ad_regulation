@@ -57,13 +57,18 @@ const mapRuleFromApi = (item: any): RuleDefinition => {
 export interface RuleConfig {
   id: string
   name: string
-  base_rule: string
+  base_rule: string  // ID of the base system rule
+  base_rule_name: string | null  // Name of the base system rule (for display)
   description: string | null
   version: string
+  // Source tracking
+  template_id: string | null  // null = system rule, otherwise = cloned from
+  source: string  // "system" or "user:{user_id}"
   parameter_overrides: Record<string, any>
   parameters_schema: Record<string, any>
   tags: string[]
   is_active: boolean
+  is_archived: boolean  // Archived rules are soft-deleted
   created_by: string | null
   updated_by: string | null
   created_at: string
@@ -71,10 +76,11 @@ export interface RuleConfig {
 }
 
 export interface RuleConfigCreate {
-  name: string
+  suffix: string  // User-defined suffix, final name will be {base_rule}:{user_id}:{suffix}
   base_rule: string
+  template_id?: string  // ID of rule to clone from (for version tracking)
   description?: string
-  parameter_overrides?: Record<string, any>
+  parameter_overrides?: Record<string, any>  // evaluation_date will be filtered out
   tags?: string[]
 }
 
@@ -84,9 +90,19 @@ export interface RuleConfigClone {
   description?: string
 }
 
-export const fetchRuleConfigs = async (baseRule?: string): Promise<RuleConfig[]> => {
+export interface RuleConfigFilters {
+  baseRule?: string
+  source?: 'system' | 'user'
+  includeArchived?: boolean
+}
+
+export const fetchRuleConfigs = async (filters?: RuleConfigFilters): Promise<RuleConfig[]> => {
   const { data } = await apiClient.get('/rules/configs', {
-    params: { base_rule: baseRule }
+    params: {
+      base_rule: filters?.baseRule,
+      source: filters?.source,
+      include_archived: filters?.includeArchived
+    }
   })
   const payload = extractResponseData(data, [])
   return Array.isArray(payload) ? payload : []
@@ -110,8 +126,19 @@ export const cloneRuleConfig = async (configId: string, payload: RuleConfigClone
   return extractSingleObject<RuleConfig>(data)
 }
 
+export const archiveRuleConfig = async (configId: string): Promise<RuleConfig> => {
+  const { data } = await apiClient.post(`/rules/configs/${configId}/archive`)
+  return extractSingleObject<RuleConfig>(data)
+}
+
 export const deleteRuleConfig = async (configId: string): Promise<void> => {
+  // Note: This actually archives the config, not deletes it
   await apiClient.delete(`/rules/configs/${configId}`)
+}
+
+export const syncSystemRules = async (): Promise<{ synced_count: number }> => {
+  const { data } = await apiClient.post('/rules/sync-system-rules')
+  return extractSingleObject<{ synced_count: number }>(data)
 }
 
 // ===== Rule Bindings =====

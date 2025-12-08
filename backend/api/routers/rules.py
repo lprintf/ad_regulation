@@ -6,13 +6,14 @@ Refactored to use registry-based rules instead of database-stored code.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, status
 
 from api.models.responses import SuccessResponse
 from api.models.rules import (
     RuleBindingCreate,
     RuleBindingResponse,
     RuleBindingUpdate,
+    RuleConfigArchive,
     RuleConfigClone,
     RuleConfigCreate,
     RuleConfigResponse,
@@ -76,14 +77,20 @@ async def get_rule_info(rule_name: str):
     response_model=SuccessResponse[RuleConfigResponse],
     status_code=status.HTTP_201_CREATED,
 )
-async def create_rule_config(request: RuleConfigCreate):
+async def create_rule_config(
+    request: RuleConfigCreate,
+    x_user_id: str = Header(..., alias="X-User-Id", description="User ID from auth header"),
+):
     """
     Create a new rule configuration (clone a rule with modified default parameters).
-
-    This allows creating variants of base rules with different parameter defaults
-    without modifying the original code-based rule.
+    
+    命名规则: {base_rule}:{user_id}:{suffix}
+    - evaluation_date 参数不可覆盖，永远为空
+    - User ID 从 X-User-Id header 获取
     """
     try:
+        # Set created_by from X-User-Id header
+        request.created_by = x_user_id
         result = await RuleEngineService.create_config(request)
         return SuccessResponse(data=result, message="Rule config created")
     except ValueError as exc:
@@ -96,10 +103,21 @@ async def create_rule_config(request: RuleConfigCreate):
 )
 async def list_rule_configs(
     base_rule: str | None = Query(default=None, description="Filter by base rule name"),
+    source: str | None = Query(default=None, description="Filter by source: 'system' or 'user'"),
+    include_archived: bool = Query(default=False, description="Include archived configs"),
 ):
-    """List all rule configurations, optionally filtered by base rule."""
+    """
+    List all rule configurations (unified model for system and user rules).
+    
+    - System rules: template_id=null, source='system'
+    - User rules: template_id=cloned_from_id, source='user:{user_id}'
+    """
     try:
-        result = await RuleEngineService.list_configs(base_rule=base_rule)
+        result = await RuleEngineService.list_configs(
+            base_rule=base_rule,
+            source=source,
+            include_archived=include_archived,
+        )
         return SuccessResponse(data=result, message="Rule configs retrieved")
     except ValueError as exc:
         _handle_value_error(exc)
@@ -154,14 +172,58 @@ async def clone_rule_config(config_id: str, request: RuleConfigClone):
         _handle_value_error(exc)
 
 
+@router.post(
+    "/configs/{config_id}/archive",
+    response_model=SuccessResponse[RuleConfigResponse],
+)
+async def archive_rule_config(config_id: str, request: RuleConfigArchive | None = None):
+    """
+    Archive a rule configuration (soft delete).
+    
+    Rules cannot be deleted, only archived. System rules cannot be archived.
+    Archived rules are hidden by default but can be retrieved with include_archived=true.
+    """
+    try:
+        result = await RuleEngineService.archive_config(config_id, request)
+        return SuccessResponse(data=result, message="Rule config archived")
+    except ValueError as exc:
+        _handle_value_error(exc)
+
+
 @router.delete(
     "/configs/{config_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_rule_config(config_id: str):
-    """Delete a rule configuration."""
+    """
+    Delete a rule configuration.
+    
+    Note: This actually archives the config instead of deleting it.
+    Rules cannot be permanently deleted.
+    """
     try:
         await RuleEngineService.delete_config(config_id)
+    except ValueError as exc:
+        _handle_value_error(exc)
+
+
+@router.post(
+    "/sync-system-rules",
+    response_model=SuccessResponse[dict],
+)
+async def sync_system_rules():
+    """
+    Sync system rules from code registry to database.
+    
+    This creates or updates RuleConfigDocument records for each registered rule
+    with source='system' and template_id=null.
+    """
+    try:
+        count = await RuleEngineService.sync_system_rules()
+        return SuccessResponse(
+            data={"synced_count": count},
+            message=f"Synced {count} system rules to database"
+        )
     except ValueError as exc:
         _handle_value_error(exc)
 
