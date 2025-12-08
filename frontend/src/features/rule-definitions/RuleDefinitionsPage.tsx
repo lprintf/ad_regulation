@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Modal, Tabs, Dropdown, Breadcrumb, toast } from '@/components/ui'
+import { Modal, Tabs, Breadcrumb, toast } from '@/components/ui'
 import { 
   fetchAvailableRules, 
   fetchRuleConfigs, 
@@ -631,15 +631,12 @@ const RuleDefinitionsPage = () => {
                       <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>创建于 {formatDateTime(binding.created_at)}</div>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                      <Dropdown
-                        items={[
-                          { key: 'test', label: '运行', onClick: () => setSelectedBinding(binding) },
-                          { key: 'edit', label: '编辑', onClick: () => { setIsCreatingBinding(false); setEditingBinding(binding) } },
-                          { key: 'toggle', label: binding.active ? '停用' : '启用', onClick: () => updateBindingMutation.mutate({ bindingId: binding.id, values: { active: !binding.active } }) },
-                          { key: 'delete', label: '删除', danger: true, onClick: () => { if (confirm(`确定要删除与 ${binding.entityId} 的绑定吗？`)) deleteBindingMutation.mutate(binding.id) } }
-                        ]}
-                        trigger={<button className="button button--secondary">操作 ▼</button>}
-                      />
+                      <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                        <button className="button button--secondary" onClick={() => setSelectedBinding(binding)}>详细</button>
+                        <button className="button button--secondary" onClick={() => { setIsCreatingBinding(false); setEditingBinding(binding) }}>编辑</button>
+                        <button className="button button--ghost" onClick={() => updateBindingMutation.mutate({ bindingId: binding.id, values: { active: !binding.active } })}>{binding.active ? '停用' : '启用'}</button>
+                        <button className="button button--ghost text-destructive" onClick={() => { if (confirm(`确定要删除与 ${binding.entityId} 的绑定吗？`)) deleteBindingMutation.mutate(binding.id) }}>删除</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
