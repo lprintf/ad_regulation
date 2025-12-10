@@ -233,14 +233,16 @@ def build_labels(
 if __name__ == "__main__":
     import pandas as pd
 
-    df = pd.read_feather("D:/data/1243925423619499_2022-09-14_2025-10-13.feather")
-    ad_total_spend = df.groupby("ad_id")["spend"].sum()
-    print(ad_total_spend.describe())
-
-    df_clean = clean_data(df)
-    feat = build_features(df_clean)
-    labels = build_labels(df_clean)
-    feat.to_feather("models/feat.feather")
-    labels.to_feather("models/labels.feather")
-    print(feat.describe())
-    print(labels.describe())
+    # Example usage: load data from a feather file and build features/labels
+    # df = pd.read_feather("path/to/your/data.feather")
+    # ad_total_spend = df.groupby("ad_id")["spend"].sum()
+    # print(ad_total_spend.describe())
+    #
+    # df_clean = clean_data(df)
+    # feat = build_features(df_clean)
+    # labels = build_labels(df_clean)
+    # feat.to_feather("models/feat.feather")
+    # labels.to_feather("models/labels.feather")
+    # print(feat.describe())
+    # print(labels.describe())
+    pass

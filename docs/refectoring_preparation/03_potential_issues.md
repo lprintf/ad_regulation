@@ -581,8 +581,7 @@ MAX_ENTITY_NAME_BATCH_SIZE = 50  # ❌ 硬编码
 REALTIME_LOOKBACK_DAYS = 3  # ❌ 硬编码
 INSIGHTS_ASYNC_THRESHOLD_DAYS = 7  # ❌ 硬编码
 
-# baseline/get_data.py (假设存在)
-data_path = "D:/data/insights_data_1020/"  # ❌ 硬编码路径（Windows 路径）
+# Note: Data storage has been migrated to MongoDB (InsightsDocument)
 ```
 
 **影响**:

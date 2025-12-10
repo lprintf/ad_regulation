@@ -13,7 +13,9 @@ from utils.insight_tool import (
     get_daily_insight,
 )
 
-ROOT_DIR = "D:/data/insights_data_1020"
+# Legacy: Data is now stored in MongoDB via InsightsDocument
+# This module is kept for reference but not actively used
+ROOT_DIR = "/tmp/insights_data"  # Fallback path for local file operations
 
 
 def get_file_path(ad_account_id, date_start, date_stop, root_dir=ROOT_DIR) -> str:

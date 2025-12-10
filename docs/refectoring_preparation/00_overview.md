@@ -137,7 +137,6 @@
 4. **硬编码配置**
    - `REALTIME_LOOKBACK_DAYS = 3`
    - `MAX_ENTITY_NAME_BATCH_SIZE = 50`
-   - 数据路径: `D:/data/insights_data_1020/`
 
 ---
 

@@ -423,17 +423,29 @@ export const fetchEntityTimeline = async (params: {
   // Sort by date and build daily_data
   const sorted = filtered.sort((a: any, b: any) => a.date.localeCompare(b.date))
   
-  const daily_data: EntityTimelineDataPoint[] = sorted.map((item: any) => ({
-    date: item.date,
-    spend: item.metrics?.spend || 0,
-    clicks: item.metrics?.clicks || 0,
-    impressions: item.metrics?.impressions || 0,
-    reach: item.metrics?.reach || 0,
-    cpc: item.metrics?.cpc || 0,
-    cpm: item.metrics?.cpm || 0,
-    ctr: item.metrics?.ctr || 0,
-    roas: item.metrics?.roas || 0,
-  }))
+  const daily_data: EntityTimelineDataPoint[] = sorted.map((item: any) => {
+    const spend = item.metrics?.spend || 0
+    const impressions = item.metrics?.impressions || 0
+    const inlineLinkClicks = item.metrics?.inline_link_clicks || 0
+    const onsiteWebPurchaseValue = item.metrics?.onsite_web_purchase_value || 0
+    
+    // Calculate CTR: inline_link_clicks / impressions
+    const ctr = impressions > 0 ? inlineLinkClicks / impressions : 0
+    // Calculate ROAS: onsite_web_purchase_value / spend
+    const roas = spend > 0 ? onsiteWebPurchaseValue / spend : 0
+    
+    return {
+      date: item.date,
+      spend,
+      clicks: item.metrics?.clicks || 0,
+      impressions,
+      reach: item.metrics?.reach || 0,
+      cpc: item.metrics?.cpc || 0,
+      cpm: item.metrics?.cpm || 0,
+      ctr,
+      roas,
+    }
+  })
   
   const dateRange = daily_data.length > 0 
     ? { since: daily_data[0].date, until: daily_data[daily_data.length - 1].date }

@@ -203,7 +203,7 @@ python baseline/data_build.py
 - `MONGO_INITDB_ROOT_PASSWORD`: MongoDB admin password
 
 ### Data Storage
-- Raw insights data: `.feather` files in `D:/data/insights_data_1020/` (hardcoded in `get_data.py`)
+- Raw insights data: Stored in MongoDB via `InsightsDocument`
 - Feature/label files: `models/feat.feather`, `models/labels.feather`
 - Trained models: Saved with joblib as `.feather` files
 
