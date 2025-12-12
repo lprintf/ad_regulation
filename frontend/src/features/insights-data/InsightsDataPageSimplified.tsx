@@ -595,7 +595,7 @@ const InsightsDataPageSimplified = () => {
                   disabled={aggregatedEntities.length === 0}
                 />
               </th>
-              <th style={{ minWidth: 260 }}>{LEVEL_LABELS[level]}</th>
+              <th style={{ maxWidth: 280 }}>{LEVEL_LABELS[level]}</th>
               {level !== 'account' && <th style={{ width: 140 }}>状态</th>}
               <th style={{ width: 160 }}>操作</th>
               <th className="text-right" style={{ width: 120 }}>Spend</th>
@@ -623,14 +623,14 @@ const InsightsDataPageSimplified = () => {
                       onChange={() => toggleSelection(entity.entityId)}
                     />
                   </td>
-                  <td style={{ minWidth: 260 }}>
+                  <td style={{ maxWidth: 280 }}>
                     <div className="flex items-center gap-3">
                       {level === 'ad' && (
                         <div className="w-10 h-10 rounded-md bg-muted flex items-center justify-center font-semibold text-sm">
                           {displayName.charAt(0).toUpperCase()}
                         </div>
                       )}
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div
                           className={`font-semibold truncate ${entity.entityName ? '' : 'text-muted-foreground'}`}
                           title={displayName}
