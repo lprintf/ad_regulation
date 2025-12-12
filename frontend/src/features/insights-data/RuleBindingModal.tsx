@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Modal, Spinner, toast } from '@/components/ui'
 import type { RuleEntityType } from '../../types/rule-engine'
 import { createRuleBinding } from '../../api/ruleEngine'
-import { useEntityRuleBindings, usePublishedRules } from '../rule-bindings/hooks'
+import { useEntityRuleBindings, useAllRulesForBinding } from '../rule-bindings/hooks'
 
 export interface RuleBindingTarget {
   entityId: string
@@ -24,7 +24,7 @@ interface RuleBindingModalProps {
 
 const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
   const queryClient = useQueryClient()
-  const { rules, isLoading: isLoadingRules, isError: isRuleError } = usePublishedRules()
+  const { rules, isLoading: isLoadingRules, isError: isRuleError } = useAllRulesForBinding()
   const { data: bindingsResponse, isLoading: isLoadingBindings } = useEntityRuleBindings(
     target?.entityId,
     target?.entityType,
@@ -128,11 +128,22 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
                   onChange={event => setSelectedRuleId(event.target.value)}
                   required
                 >
-                  {rules.map(rule => (
-                    <option key={rule.id} value={rule.id}>
-                      {rule.name} (v{rule.version})
-                    </option>
-                  ))}
+                  <optgroup label="系统规则">
+                    {rules.filter(r => !r.isUserConfig).map(rule => (
+                      <option key={rule.id} value={rule.id}>
+                        {rule.name} (v{rule.version})
+                      </option>
+                    ))}
+                  </optgroup>
+                  {rules.some(r => r.isUserConfig) && (
+                    <optgroup label="用户配置">
+                      {rules.filter(r => r.isUserConfig).map(rule => (
+                        <option key={rule.id} value={rule.id}>
+                          {rule.name} (v{rule.version})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
               </label>
 
