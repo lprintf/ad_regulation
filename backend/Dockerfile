@@ -36,6 +36,7 @@ RUN uv pip install --system -r pyproject.toml
 COPY api ./api
 COPY utils ./utils
 COPY baseline ./baseline
+COPY rules ./rules
 COPY config.py ./
 
 EXPOSE 8000
