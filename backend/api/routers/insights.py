@@ -1591,6 +1591,7 @@ async def get_job_result(
 )
 async def sync_entity_names(
     request: EntityNamesSyncRequest,
+    force: bool = False,  # Query parameter for manual refresh
     _current_user: str = Depends(get_current_user),
 ) -> SuccessResponse[EntityNamesSyncResult]:
     """
@@ -1614,15 +1615,26 @@ async def sync_entity_names(
                 detail=f"Invalid entity_type: {request.entity_type}. Must be ad, adset, or campaign",
             )
 
-        result = await EntityNamesSyncService.sync_entity_names(
+        from api.services.entity_sync_debounce import EntitySyncDebounceService
+
+        result = await EntitySyncDebounceService.sync_with_debounce(
             account_id=request.ad_account_id,
             entity_ids=request.entity_ids,
             entity_type=request.entity_type,
+            force=force,
         )
+
+        skipped = result.get("skipped", 0)
+        if result.get("status") == "skipped":
+            message = f"All {len(request.entity_ids)} entities are already being synced"
+        elif skipped > 0:
+            message = f"Synced {result['synced']} entities, {skipped} already syncing"
+        else:
+            message = f"Successfully synced {result['synced']} entity names"
 
         return SuccessResponse(
             data=EntityNamesSyncResult(**result),
-            message=f"Successfully synced {result['synced']} entity names",
+            message=message,
         )
 
     except ValueError as e:

@@ -3,12 +3,13 @@
  * Uses new overview/drilldown API instead of n+1 queries
  */
 import { useState, useMemo, useCallback, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Modal, Spinner, Tabs } from '@/components/ui'
 import { fetchAdAccounts } from '../../api/adAccounts'
 import {
   fetchInsightsOverview,
   fetchInsightsDrilldown,
+  syncEntityNames,
   type InsightsDataSource,
   type EntitySelection,
 } from '../../api/insights'
@@ -17,6 +18,7 @@ import type { RuleEntityType } from '../../types/rule-engine'
 import PerformanceTrendChart from './PerformanceTrendChart'
 import RuleBindingsList from '../../components/RuleBindingsList'
 import RuleBindingModal, { type RuleBindingTarget } from './RuleBindingModal'
+import { toast } from 'sonner'
 
 type HierarchyLevel = 'account' | 'campaign' | 'adset' | 'ad'
 
@@ -223,6 +225,57 @@ const InsightsDataPageSimplified = () => {
     staleTime: 30_000,
   })
 
+  // Entity name sync mutation
+  const queryClient = useQueryClient()
+  const [syncingEntityIds, setSyncingEntityIds] = useState<Set<string>>(new Set())
+
+  const syncMutation = useMutation({
+    mutationFn: async ({ entityIds, accountId }: { entityIds: string[], accountId: string }) => {
+      const entityType = level as 'campaign' | 'adset' | 'ad'
+      return syncEntityNames({
+        adAccountId: accountId,
+        entityIds,
+        entityType,
+      })
+    },
+    onSuccess: (result, variables) => {
+      // Mark syncing complete
+      setSyncingEntityIds(prev => {
+        const next = new Set(prev)
+        variables.entityIds.forEach(id => next.delete(id))
+        return next
+      })
+
+      // Invalidate queries to refetch with updated names
+      queryClient.invalidateQueries({ queryKey: ['insights', 'drilldown'] })
+      queryClient.invalidateQueries({ queryKey: ['insights', 'overview'] })
+
+      // Show success toast
+      toast.success(`已同步 ${result.synced} 个实体名称`)
+
+      if (result.failed > 0) {
+        toast.warning(`${result.failed} 个实体同步失败`)
+      }
+      if (result.rateLimited > 0) {
+        toast.warning(`${result.rateLimited} 个实体被速率限制`)
+      }
+    },
+    onError: (error, variables) => {
+      // Mark syncing complete
+      setSyncingEntityIds(prev => {
+        const next = new Set(prev)
+        variables.entityIds.forEach(id => next.delete(id))
+        return next
+      })
+      toast.error(`同步失败: ${error instanceof Error ? error.message : String(error)}`)
+    },
+  })
+
+  const handleSyncEntity = useCallback((entityId: string, accountId: string) => {
+    setSyncingEntityIds(prev => new Set(prev).add(entityId))
+    syncMutation.mutate({ entityIds: [entityId], accountId })
+  }, [syncMutation])
+
   // Aggregate drilldown data by entity
   const aggregatedEntities = useMemo<AggregatedEntity[]>(() => {
     if (level === 'account') {
@@ -284,6 +337,48 @@ const InsightsDataPageSimplified = () => {
 
     return Array.from(aggregated.values())
   }, [level, overviewQuery.data, drilldownQuery.data, accountNameMap])
+
+  const handleBatchSync = useCallback(() => {
+    if (selectedIds.size === 0) {
+      toast.warning('请先选择要同步的实体')
+      return
+    }
+
+    const MAX_BATCH_SIZE = 50  // 后端限制每次最多50个
+
+    // Group by account ID
+    const entityIdsByAccount = new Map<string, string[]>()
+    aggregatedEntities.forEach(entity => {
+      if (selectedIds.has(entity.entityId)) {
+        const list = entityIdsByAccount.get(entity.accountId) ?? []
+        list.push(entity.entityId)
+        entityIdsByAccount.set(entity.accountId, list)
+      }
+    })
+
+    // Mark all as syncing
+    setSyncingEntityIds(prev => new Set([...prev, ...selectedIds]))
+
+    // 自动分批：将每个账号的实体ID列表分成每批最多50个
+    let totalBatches = 0
+    entityIdsByAccount.forEach((entityIds, accountId) => {
+      // 分批处理
+      for (let i = 0; i < entityIds.length; i += MAX_BATCH_SIZE) {
+        const batch = entityIds.slice(i, i + MAX_BATCH_SIZE)
+        totalBatches++
+
+        // 每批之间延迟100ms，避免并发过多
+        setTimeout(() => {
+          syncMutation.mutate({ entityIds: batch, accountId })
+        }, totalBatches * 100)
+      }
+    })
+
+    if (totalBatches > 1) {
+      toast.info(`已分成 ${totalBatches} 批次同步，请稍候...`)
+    }
+  }, [selectedIds, aggregatedEntities, syncMutation])
+
 
   // Get entity insights for detail modal
   const detailEntityInsights = useMemo<InsightRecord[]>(() => {
@@ -555,11 +650,40 @@ const InsightsDataPageSimplified = () => {
                   {level !== 'account' && (
                     <td style={{ width: 140 }}>
                       <div className="flex items-center gap-2">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full inline-block"
-                          style={{ backgroundColor: statusColor }}
-                        />
-                        <span>{entity.configuredStatus ?? '—'}</span>
+                        <div className="flex items-center gap-2 flex-1">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full inline-block"
+                            style={{ backgroundColor: statusColor }}
+                          />
+                          <span>{entity.configuredStatus ?? '—'}</span>
+                        </div>
+                        <button
+                          className="button button--ghost p-1 hover:bg-accent rounded"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleSyncEntity(entity.entityId, entity.accountId)
+                          }}
+                          disabled={syncingEntityIds.has(entity.entityId)}
+                          title="刷新实体名称和状态"
+                        >
+                          {syncingEntityIds.has(entity.entityId) ? (
+                            <Spinner className="w-4 h-4" />
+                          ) : (
+                            <svg
+                              className="w-4 h-4"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                              />
+                            </svg>
+                          )}
+                        </button>
                       </div>
                       {entity.effectiveStatus && entity.effectiveStatus !== entity.configuredStatus && (
                         <div className="text-xs text-muted-foreground">有效：{entity.effectiveStatus}</div>
@@ -862,6 +986,15 @@ const InsightsDataPageSimplified = () => {
               <span>已选 {selectedIds.size} 个</span>
               {selectedIds.size > 0 && level !== 'ad' && (
                 <span className="text-xs">（勾选的实体将用于下钻筛选）</span>
+              )}
+              {selectedIds.size > 0 && level !== 'account' && (
+                <button
+                  className="button button--primary text-xs px-3 py-1"
+                  onClick={handleBatchSync}
+                  disabled={syncMutation.isPending}
+                >
+                  {syncMutation.isPending ? '同步中...' : '批量刷新实体名称'}
+                </button>
               )}
             </div>
           </div>

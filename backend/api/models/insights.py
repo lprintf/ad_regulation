@@ -463,12 +463,14 @@ class SyncedEntityName(BaseModel):
 
 
 class EntityNamesSyncResult(BaseModel):
-    """Response payload for the sync entity names endpoint."""
+    """Response payload for the sync entity names endpoint with debouncing support."""
 
     synced: int = Field(..., description="Number of entities successfully synced")
     failed: int = Field(..., description="Number of entities that failed to sync")
     total: int = Field(..., description="Total entity count in the request")
     rate_limited: int = Field(..., description="Number of rate limit events detected")
+    skipped: int = Field(default=0, description="Number of entities skipped (already syncing)")
+    status: str = Field(default="completed", description="Overall sync status: completed, partial, or skipped")
     entities: list[SyncedEntityName] = Field(
         default_factory=list, description="Details for entities whose names were synced"
     )

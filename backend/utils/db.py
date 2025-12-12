@@ -304,7 +304,11 @@ class AdEntityNamesDocument(Document):
     class Settings:
         name = "ad_entity_names"
         indexes = [
-            IndexModel([("entity_type", 1), ("entity_id", 1)], unique=True),
+            # 唯一索引必须包含 account_id，防止跨账号数据覆盖
+            IndexModel(
+                [("account_id", 1), ("entity_type", 1), ("entity_id", 1)],
+                unique=True
+            ),
             IndexModel("account_id"),
             IndexModel([("account_id", 1), ("entity_type", 1)]),
         ]

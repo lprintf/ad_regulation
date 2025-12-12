@@ -1964,6 +1964,7 @@ async def query_insights_drilldown(
         raise ValueError("since date must be on or before until date")
 
     all_insights: list[dict[str, Any]] = []
+    account_ids_for_names: set[str] = set()  # Track account IDs for name attachment
 
     # Process each selection
     for selection in selections:
@@ -1972,6 +1973,7 @@ async def query_insights_drilldown(
             continue
 
         normalized_id = normalize_account_id(account_id)
+        account_ids_for_names.add(normalized_id)  # Track for entity name attachment
 
         # Build object filter based on selection
         object_level: str | None = None
@@ -2035,6 +2037,12 @@ async def query_insights_drilldown(
             x.get("ad_id") or x.get("adset_id") or x.get("campaign_id") or "",
         ),
     )
+
+    # Attach entity names from database for all accounts
+    for account_id in account_ids_for_names:
+        all_insights = await InsightsService._attach_entity_names(
+            all_insights, level, account_id
+        )
 
     return {
         "insights": all_insights,
