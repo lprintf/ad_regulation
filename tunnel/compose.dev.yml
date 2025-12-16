@@ -82,8 +82,8 @@ services:
     labels:
       - traefik.enable=true
       # 开发路由：支持两个域名，绕过身份认证
-      - traefik.http.routers.${PROJECT_NAME}-dev.rule=Host(`${PROJECT_NAME}-dev.${DOMAIN}`) || Host(`${PROJECT_NAME}-dev.${DOMAIN2}`)
-      - traefik.http.routers.${PROJECT_NAME}-dev.entrypoints=web
-      - traefik.http.routers.${PROJECT_NAME}-dev.middlewares=strip-user-headers@file
-      - traefik.http.services.${PROJECT_NAME}-dev.loadbalancer.server.port=80
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.rule=Host(`${COMPOSE_PROJECT_NAME}-dev.${DOMAIN}`) || Host(`${COMPOSE_PROJECT_NAME}-dev.${DOMAIN2}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.entrypoints=web
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.middlewares=strip-user-headers@file
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}-dev.loadbalancer.server.port=80
     restart: unless-stopped

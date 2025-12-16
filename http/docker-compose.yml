@@ -81,12 +81,12 @@ services:
           - ${COMPOSE_PROJECT_NAME}-frontend  # 外部网络使用唯一别名
     labels:
       - traefik.enable=true
-      - traefik.http.routers.${PROJECT_NAME}.rule=Host(`${PROJECT_NAME}.${DOMAIN}`)
-      - traefik.http.routers.${PROJECT_NAME}.entrypoints=web
-      - traefik.http.routers.${PROJECT_NAME}.middlewares=strip-user-headers@file,oidc-auth@file
-      - traefik.http.services.${PROJECT_NAME}.loadbalancer.server.port=80
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`${COMPOSE_PROJECT_NAME}.${DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=web
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.middlewares=strip-user-headers@file,oidc-auth@file
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=80
       # 使用优化的 HTTP/1.1 连接池 transport（高并发场景）
-      - traefik.http.services.${PROJECT_NAME}.loadbalancer.serverstransport=http1-pool@file
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.serverstransport=http1-pool@file
     restart: unless-stopped
 
 volumes:
