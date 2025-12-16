@@ -81,8 +81,8 @@ services:
           - ${COMPOSE_PROJECT_NAME}-frontend-dev  # 外部网络使用唯一别名
     labels:
       - traefik.enable=true
-      # 开发路由：绕过身份认证（路由名使用项目变量避免冲突）
-      - traefik.http.routers.${PROJECT_NAME}-dev.rule=Host(`${PROJECT_NAME}-dev.${DOMAIN}`)
+      # 开发路由：支持两个域名，绕过身份认证
+      - traefik.http.routers.${PROJECT_NAME}-dev.rule=Host(`${PROJECT_NAME}-dev.${DOMAIN}`) || Host(`${PROJECT_NAME}-dev.${DOMAIN2}`)
       - traefik.http.routers.${PROJECT_NAME}-dev.entrypoints=web
       - traefik.http.routers.${PROJECT_NAME}-dev.middlewares=strip-user-headers@file
       - traefik.http.services.${PROJECT_NAME}-dev.loadbalancer.server.port=80

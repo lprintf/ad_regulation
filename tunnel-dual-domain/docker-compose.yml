@@ -32,7 +32,7 @@ services:
         - "host.docker.internal:host-gateway"
     environment:
       MONGODB_HOST: mongodb
-      MONGODB_DB_NAME: ${MONGODB_DB_NAME}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-fb}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       HTTP_PROXY: ${HTTP_PROXY:-}
@@ -81,11 +81,21 @@ services:
           - ${COMPOSE_PROJECT_NAME}-frontend  # 外部网络使用唯一别名
     labels:
       - traefik.enable=true
-      - traefik.http.routers.${PROJECT_NAME}.rule=Host(`${PROJECT_NAME}.${DOMAIN}`)
-      - traefik.http.routers.${PROJECT_NAME}.entrypoints=web
-      - traefik.http.routers.${PROJECT_NAME}.middlewares=strip-user-headers@file,oidc-auth@file
+      
+      # 域名1 路由
+      - traefik.http.routers.${PROJECT_NAME}-domain1.rule=Host(`${PROJECT_NAME}.${DOMAIN}`)
+      - traefik.http.routers.${PROJECT_NAME}-domain1.entrypoints=web
+      - traefik.http.routers.${PROJECT_NAME}-domain1.middlewares=strip-user-headers@file,oidc-auth@file
+      - traefik.http.routers.${PROJECT_NAME}-domain1.service=${PROJECT_NAME}
+      
+      # 域名2 路由
+      - traefik.http.routers.${PROJECT_NAME}-domain2.rule=Host(`${PROJECT_NAME}.${DOMAIN2}`)
+      - traefik.http.routers.${PROJECT_NAME}-domain2.entrypoints=web
+      - traefik.http.routers.${PROJECT_NAME}-domain2.middlewares=strip-user-headers@file,oidc-auth2@file
+      - traefik.http.routers.${PROJECT_NAME}-domain2.service=${PROJECT_NAME}
+      
+      # 服务定义（两个路由共享）
       - traefik.http.services.${PROJECT_NAME}.loadbalancer.server.port=80
-      # 使用优化的 HTTP/1.1 连接池 transport（高并发场景）
       - traefik.http.services.${PROJECT_NAME}.loadbalancer.serverstransport=http1-pool@file
     restart: unless-stopped
 
@@ -95,6 +105,6 @@ volumes:
 
 networks:
   default:
-    name: ${COMPOSE_PROJECT_NAME:-ad-regulation-http}_internal
+    name: ${COMPOSE_PROJECT_NAME}_internal
   gateway-http:
     external: true
