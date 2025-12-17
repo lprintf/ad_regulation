@@ -7,7 +7,7 @@ HTTP 模式部署配置，适用于本地开发或无需 HTTPS 的环境。
 ```
 用户
  ↓
-Traefik (gateway-http)
+Traefik (gateway)
  ↓
 frontend (nginx)
  ↓ (内部网络)
@@ -23,7 +23,7 @@ mongodb
   - backend: 仅内部网络
   - frontend: 桥接内外网络
 
-- **外部网络**: `gateway-http`
+- **外部网络**: `gateway`
   - frontend: 使用别名 `ad-regulation-http-frontend`
 
 ## 快速开始
@@ -128,7 +128,7 @@ docker compose down -v
    - 所有服务间通信使用简单服务名（mongodb, backend, frontend）
    - 不与其他项目冲突
 
-2. **外部网络** (`gateway-http`)
+2. **外部网络** (`gateway`)
    - 仅 frontend 连接
    - 使用网络别名 `ad-regulation-http-frontend` 确保唯一性
    - 通过 Traefik 提供外部访问

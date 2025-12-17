@@ -76,7 +76,7 @@ services:
     networks:
       default:
         # 内部网络使用简单服务名
-      gateway-http:
+      gateway:
         aliases:
           - ${COMPOSE_PROJECT_NAME}-frontend  # 外部网络使用唯一别名
     labels:
@@ -106,5 +106,5 @@ volumes:
 networks:
   default:
     name: ${COMPOSE_PROJECT_NAME}_internal
-  gateway-http:
+  gateway:
     external: true

@@ -1,13 +1,15 @@
 # Ad Regulation HTTP 部署
 
-HTTP 模式部署配置，适用于本地开发或无需 HTTPS 的环境。
+HTTP 模式部署配置，通过 Cloudflare Tunnel 或自建 Tunnel 对外暴露 HTTPS 服务。
 
 ## 架构
 
 ```
-用户
+用户 (HTTPS)
  ↓
-Traefik (gateway-http)
+Cloudflare Tunnel / 自建 Tunnel
+ ↓ (HTTP)
+Traefik (gateway, 监听 8080)
  ↓
 frontend (nginx)
  ↓ (内部网络)
@@ -16,6 +18,12 @@ backend (uvicorn)
 mongodb
 ```
 
+**说明**:
+- 内部服务使用 HTTP 通信（无需配置 HTTPS）
+- Traefik 监听 8080 端口，接收来自 Tunnel 的 HTTP 流量
+- Cloudflare Tunnel 或自建 Tunnel 负责 TLS 终止，对外暴露 HTTPS
+- 用户访问 `https://fb.${DOMAIN}` 时，流量经过 Tunnel 加密传输
+
 ## 网络架构
 
 - **内部网络**: `ad-regulation-http_internal`
@@ -23,7 +31,7 @@ mongodb
   - backend: 仅内部网络
   - frontend: 桥接内外网络
 
-- **外部网络**: `gateway-http`
+- **外部网络**: `gateway`
   - frontend: 使用别名 `ad-regulation-http-frontend`
 
 ## 快速开始
@@ -34,7 +42,7 @@ mongodb
 ./start.sh
 ```
 
-访问地址: `http://fb.${DOMAIN}`
+访问地址: `https://fb.${DOMAIN}` (通过 Tunnel 暴露)
 
 ### 开发模式
 
@@ -43,8 +51,9 @@ mongodb
 ```
 
 访问地址:
-- 生产环境（带认证）: `http://fb.${DOMAIN}`
-- 开发环境（无认证）: `http://fb-dev.${DOMAIN}`
+- 生产环境（带认证）: `https://fb.${DOMAIN}` (通过 Tunnel 暴露)
+- 开发环境（无认证）: `https://fb-dev.${DOMAIN}` (通过 Tunnel 暴露)
+- 本地测试（绕过 Tunnel）: `curl --resolve fb-dev.${DOMAIN}:8080:127.0.0.1 http://fb-dev.${DOMAIN}:8080`
 
 ### 停止服务
 
@@ -70,12 +79,29 @@ MONGO_INITDB_ROOT_PASSWORD=admin123      # MongoDB 密码
 ### 服务端口
 
 生产模式:
+- Traefik: 8080 (宿主机，接收 Tunnel 流量)
 - frontend: 80 (内部)
 - backend: 8000 (内部)
 - mongodb: 27017 (内部)
 
 开发模式（额外）:
 - mongodb: 27017 (暴露到宿主机)
+
+### Tunnel 配置
+
+本项目使用 Cloudflare Tunnel 或自建 Tunnel 将内部 HTTP 服务暴露为公网 HTTPS:
+
+1. **Cloudflare Tunnel** (推荐)
+   - 自动处理 TLS 证书
+   - 配置文件: `tunnel/cloudflared/config.yml`
+   - 指向: `http://localhost:8080`
+
+2. **自建 Tunnel**
+   - 使用 frp/ngrok 等工具
+   - 需要自行配置 TLS 终止
+   - 转发到: `http://localhost:8080`
+
+**重要**: 内部服务无需配置 HTTPS，所有 TLS 加密由 Tunnel 层处理。
 
 ## 开发模式特性
 
@@ -128,7 +154,7 @@ docker compose down -v
    - 所有服务间通信使用简单服务名（mongodb, backend, frontend）
    - 不与其他项目冲突
 
-2. **外部网络** (`gateway-http`)
+2. **外部网络** (`gateway`)
    - 仅 frontend 连接
    - 使用网络别名 `ad-regulation-http-frontend` 确保唯一性
    - 通过 Traefik 提供外部访问

@@ -36,7 +36,7 @@ services:
       - traefik.http.services.fb-backend-dev-svc.loadbalancer.server.port=8000
     networks:
       default:
-      gateway-https:
+      gateway:
         aliases:
           - ${COMPOSE_PROJECT_NAME}-backend-dev
 

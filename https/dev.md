@@ -62,7 +62,7 @@ backend:
     - traefik.http.routers.fb-backend-dev.rule=Host(`fb-dev.${DOMAIN}`)
   networks:
     default:
-    gateway-https:
+    gateway:
       aliases:
         - ${COMPOSE_PROJECT_NAME}-backend-dev
 ```
@@ -242,10 +242,10 @@ MONGO_INITDB_ROOT_PASSWORD=admin123
 
 生产模式:
 - backend: 仅内部网络
-- frontend: 内部网络 + gateway-https
+- frontend: 内部网络 + gateway
 
 开发模式:
-- backend: 内部网络 + gateway-https（用于直连）
+- backend: 内部网络 + gateway（用于直连）
 - frontend: 保持不变
 
 ## 覆盖策略 vs 独立容器策略

@@ -194,7 +194,7 @@ MONGO_INITDB_ROOT_PASSWORD=admin123
 开发容器使用相同的网络架构:
 
 - `backend-dev`, `frontend-dev` 在内部网络通信
-- `frontend-dev` 使用别名 `ad-regulation-http-frontend-dev` 暴露到 gateway-http
+- `frontend-dev` 使用别名 `ad-regulation-http-frontend-dev` 暴露到 gateway
 - 不与其他项目的开发环境冲突
 
 ## 性能优化

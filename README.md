@@ -138,7 +138,7 @@ API 访问地址:
 采用双网络隔离架构，确保安全性:
 
 ```
-外部网络 (gateway-http/https)
+外部网络 (gateway)
   ↓ Traefik 路由和认证
 frontend (nginx)
   ↓ 内部网络

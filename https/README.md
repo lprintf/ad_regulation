@@ -7,7 +7,7 @@ HTTPS 模式部署配置，使用 TLS 加密和 OIDC 认证，适用于生产环
 ```
 用户
  ↓ (HTTPS)
-Traefik (gateway-https)
+Traefik (gateway)
  ↓ (TLS termination)
 frontend (nginx)
  ↓ (内部网络)
@@ -23,7 +23,7 @@ mongodb
   - backend: 仅内部网络
   - frontend: 桥接内外网络
 
-- **外部网络**: `gateway-https`
+- **外部网络**: `gateway`
   - frontend: 使用别名 `ad-regulation-https-frontend`
 
 ## 快速开始
@@ -145,7 +145,7 @@ docker compose down -v
    - 所有服务间通信使用简单服务名（mongodb, backend, frontend）
    - 不与其他项目冲突
 
-2. **外部网络** (`gateway-https`)
+2. **外部网络** (`gateway`)
    - 仅 frontend 连接（生产模式）
    - backend 也连接（开发模式，用于直连）
    - 使用网络别名确保唯一性
