@@ -34,20 +34,30 @@ const RuleBindingModal = ({ target, open, onClose }: RuleBindingModalProps) => {
   const existingBindings = useMemo(() => bindingsResponse?.items ?? [], [bindingsResponse])
 
   const [selectedRuleId, setSelectedRuleId] = useState('')
+  const [isInitialized, setIsInitialized] = useState(false)
 
+  // Initialize selectedRuleId only once when modal opens
   useEffect(() => {
-    if (open && rules.length > 0) {
-      setSelectedRuleId(rules[0].id)
-    }
-  }, [open, rules])
-
-  useEffect(() => {
-    if (!open || !existingBindings.length) {
+    if (!open) {
+      // Reset initialization flag when modal closes
+      setIsInitialized(false)
+      setSelectedRuleId('')
       return
     }
-    const latestBinding = existingBindings[0]
-    setSelectedRuleId(prev => prev || latestBinding.ruleId)
-  }, [existingBindings, open])
+
+    if (isInitialized || rules.length === 0) {
+      return
+    }
+
+    // Prioritize latest binding if exists, otherwise use first rule
+    if (existingBindings.length > 0) {
+      setSelectedRuleId(existingBindings[0].ruleId)
+    } else {
+      setSelectedRuleId(rules[0].id)
+    }
+
+    setIsInitialized(true)
+  }, [open, rules, existingBindings, isInitialized])
 
   const createBindingMutation = useMutation({
     mutationFn: createRuleBinding,

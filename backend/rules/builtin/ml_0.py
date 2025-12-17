@@ -97,7 +97,7 @@ class MLControlRule(RuleBase):
         },
         "model_path": {
             "type": "string",
-            "default": "experiments/src/output/model_all_data.joblib",
+            "default": "models/model_all_data.joblib",
             "label": "模型路径",
             "description": "ML模型文件路径",
         },
@@ -392,7 +392,7 @@ class MLControlRule(RuleBase):
             )
             window_df = df_clean[mask].copy()
 
-            if len(window_df) < 3:  # 至少需要3天数据
+            if len(window_df) < 2:  # 至少需要2天数据 TODO: 配置
                 continue
 
             # 构建特征

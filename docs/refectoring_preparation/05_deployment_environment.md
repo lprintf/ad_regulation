@@ -12,7 +12,7 @@
     ↓
 Cloudflare Tunnel (监听 8080 端口)
     ↓
-Traefik 反向代理 (gateway-http 网络)
+Traefik 反向代理 (gateway 网络)
     ↓ (Docker 服务发现)
 frontend (nginx) / backend-dev (开发直连)
     ↓
@@ -52,7 +52,7 @@ mongodb + redis
 
 | 配置项 | 说明 |
 |--------|------|
-| 外部网络 | `gateway-http` |
+| 外部网络 | `gateway` |
 | 入口点 | `web` (HTTP) |
 | 服务发现 | Docker Labels |
 
@@ -90,13 +90,13 @@ labels:
 | 网络 | 类型 | 连接服务 | 用途 |
 |------|------|----------|------|
 | `${PROJECT}_internal` | 内部 | mongodb, redis, backend, frontend | 服务间通信 |
-| `gateway-http` | 外部 | frontend | Traefik 路由入口 |
+| `gateway` | 外部 | frontend | Traefik 路由入口 |
 
 **服务拓扑**:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    gateway-http (外部网络)                   │
+│                    gateway (外部网络)                   │
 │                           ↓                                 │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │              internal (内部网络)                     │   │

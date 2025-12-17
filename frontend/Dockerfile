@@ -13,7 +13,7 @@ RUN if [ -f pnpm-lock.yaml ]; then \
     fi
 
 # Copy configuration files
-COPY tsconfig.json vite.config.ts index.html ./
+COPY tsconfig.json vite.config.ts index.html tailwind.config.js postcss.config.js ./
 
 # Copy source code and assets
 COPY public ./public

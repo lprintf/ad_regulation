@@ -500,23 +500,35 @@ const InsightsDataPageSimplified = () => {
         } else {
           // Use drilldown data from the current view if available
           const drilldownData = drilldownQuery.data?.insights ?? []
-          newSelections = drilldownData
-            .filter(item => {
-              const entityId = parentLevel === 'campaign' ? item.campaignId
-                : parentLevel === 'adset' ? item.adsetId
-                : item.adId
-              return entityId && parentSelectedIds.has(entityId)
-            })
-            .map(item => ({
-              accountId: item.adAccountId,
-              campaignId: parentLevel === 'campaign' ? (item.campaignId ?? null)
-                : parentLevel === 'adset' || parentLevel === 'ad' ? (item.campaignId ?? null)
-                : null,
-              adsetId: parentLevel === 'adset' ? (item.adsetId ?? null)
-                : parentLevel === 'ad' ? (item.adsetId ?? null)
-                : null,
-              adId: null,
-            }))
+          // Build unique selections using a Map to avoid duplicates (one entity can have multiple date records)
+          const selectionMap = new Map<string, EntitySelection>()
+
+          for (const item of drilldownData) {
+            const entityId = parentLevel === 'campaign' ? item.campaignId
+              : parentLevel === 'adset' ? item.adsetId
+              : item.adId
+
+            if (!entityId || !parentSelectedIds.has(entityId)) {
+              continue
+            }
+
+            // Use a unique key to prevent duplicates
+            const key = `${item.adAccountId}|${parentLevel}|${entityId}`
+            if (!selectionMap.has(key)) {
+              selectionMap.set(key, {
+                accountId: item.adAccountId,
+                campaignId: parentLevel === 'campaign' ? (item.campaignId ?? null)
+                  : parentLevel === 'adset' || parentLevel === 'ad' ? (item.campaignId ?? null)
+                  : null,
+                adsetId: parentLevel === 'adset' ? (item.adsetId ?? null)
+                  : parentLevel === 'ad' ? (item.adsetId ?? null)
+                  : null,
+                adId: null,
+              })
+            }
+          }
+
+          newSelections = Array.from(selectionMap.values())
         }
         break
       }
