@@ -195,12 +195,29 @@ python baseline/data_build.py
 
 ## Configuration
 
-### Environment Variables (config.py)
-- `MONGODB_HOST`: MongoDB hostname (default: localhost)
-- `MONGODB_PORT`: MongoDB port (default: 27017)
-- `MONGODB_DB_NAME`: Database name (default: fb_monitor)
-- `MONGO_INITDB_ROOT_USERNAME`: MongoDB admin username
-- `MONGO_INITDB_ROOT_PASSWORD`: MongoDB admin password
+### Environment Variables (.env)
+
+**Docker Compose Variables** (用于编排):
+- `COMPOSE_PROJECT_NAME`: 项目名称，用于生成容器名、网络名、数据库名
+- `DOMAIN`: 主域名
+- `DOMAIN2`: 第二域名（双域名部署时使用）
+
+**MongoDB Configuration**:
+- `MONGO_INITDB_ROOT_USERNAME`: MongoDB root 用户名（默认: admin）
+- `MONGO_INITDB_ROOT_PASSWORD`: MongoDB root 密码（默认: admin123）
+
+**注意**:
+- `MONGODB_HOST` 在容器环境中固定为 "mongodb"（服务名），无需配置
+- `MONGODB_DB_NAME` 自动使用 `${COMPOSE_PROJECT_NAME}` 作为数据库名
+- `MONGODB_PORT` 固定为 27017（MongoDB 默认端口），无需配置
+- 生产环境应修改默认的 MongoDB 用户名和密码
+
+**Backend Config Defaults** (config.py):
+```python
+MONGODB_HOST = "localhost"  # 容器环境会被覆盖为 "mongodb"
+MONGODB_PORT = 27017
+MONGODB_DB_NAME = "fb_monitor"  # 容器环境会被覆盖为项目名
+```
 
 ### Data Storage
 - Raw insights data: Stored in MongoDB via `InsightsDocument`

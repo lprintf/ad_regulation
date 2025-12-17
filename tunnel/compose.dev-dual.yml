@@ -1,0 +1,12 @@
+# 开发模式双域名 Traefik 路由配置（绕过认证）
+# 使用方法: docker compose -f docker-compose.yml -f compose.dev.yml -f compose.dev-dual.yml up
+
+services:
+  frontend-dev:
+    labels:
+      - traefik.enable=true
+      # 支持两个域名，使用 OR 规则
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.rule=Host(`${COMPOSE_PROJECT_NAME}-dev.${DOMAIN}`) || Host(`${COMPOSE_PROJECT_NAME}-dev.${DOMAIN2}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.entrypoints=web
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.middlewares=strip-user-headers@file
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}-dev.loadbalancer.server.port=80

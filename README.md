@@ -79,12 +79,15 @@ uv sync
 #### 2. 配置环境变量
 
 ```bash
+# 本地开发环境（直接运行 Python）
 export MONGODB_HOST=localhost
 export MONGODB_PORT=27017
-export MONGODB_DB_NAME=fb_monitor
+export MONGODB_DB_NAME=fb  # 或使用任意数据库名
 export MONGO_INITDB_ROOT_USERNAME=admin
 export MONGO_INITDB_ROOT_PASSWORD=admin123
 ```
+
+**注意**: 容器部署时，这些变量会通过 `.env` 文件和 `docker-compose.yml` 自动配置。
 
 #### 3. 启动 MongoDB
 

@@ -32,7 +32,9 @@ services:
         - "host.docker.internal:host-gateway"
     environment:
       MONGODB_HOST: mongodb
-      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-fb}
+      MONGODB_DB_NAME: ${COMPOSE_PROJECT_NAME}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       HTTP_PROXY: ${HTTP_PROXY:-}
@@ -42,8 +44,6 @@ services:
       ENABLE_SCHEDULER: "true"   # 所有实例启用调度器，自动选举 Leader
       ENABLE_WORKER: "true"       # 所有实例启用 worker（消费任务）
       WORKER_CONCURRENCY: "10"    # Worker 并发数
-    env_file:
-      - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -79,25 +79,8 @@ services:
       gateway:
         aliases:
           - ${COMPOSE_PROJECT_NAME}-frontend  # 外部网络使用唯一别名
-    labels:
-      - traefik.enable=true
-      
-      # 域名1 路由
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain1.rule=Host(`${COMPOSE_PROJECT_NAME}.${DOMAIN}`)
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain1.entrypoints=web
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain1.middlewares=strip-user-headers@file,oidc-auth@file
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain1.service=${COMPOSE_PROJECT_NAME}
-      
-      # 域名2 路由
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain2.rule=Host(`${COMPOSE_PROJECT_NAME}.${DOMAIN2}`)
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain2.entrypoints=web
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain2.middlewares=strip-user-headers@file,oidc-auth2@file
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain2.service=${COMPOSE_PROJECT_NAME}
-      
-      # 服务定义（两个路由共享）
-      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=80
-      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.serverstransport=http1-pool@file
     restart: unless-stopped
+    # Traefik labels 通过 compose.single-domain.yml 或 compose.dual-domain.yml 添加
 
 volumes:
   mongo:

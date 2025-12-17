@@ -129,7 +129,10 @@ docker compose -f docker-compose.yml -f compose.dev.yml logs -f
 开发模式下，MongoDB 端口暴露到宿主机:
 
 ```bash
-# 使用 mongosh 连接
+# 使用 mongosh 连接（用户名/密码从 .env 文件读取）
+mongosh mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017
+
+# 或使用默认值
 mongosh mongodb://admin:admin123@localhost:27017
 
 # 或使用 MongoDB Compass

@@ -10,10 +10,11 @@
 
 ### 在线迁移示例
 ```bash
+# 注意：将 user/pwd/new-host/target-db 替换为实际值
 uv run python scripts/db_migration/mongo_copy_collections.py \
   --source-uri "$OLD_MONGODB_URL" --source-db "$MONGODB_DB_NAME" \
-  --target-uri "mongodb://user:pwd@new-host:27017/fb_monitor?authSource=admin" \
-  --target-db "$MONGODB_DB_NAME" --drop-target
+  --target-uri "mongodb://user:pwd@new-host:27017/target-db?authSource=admin" \
+  --target-db "target-db" --drop-target
 ```
 
 ## 离线迁移流程

@@ -26,7 +26,9 @@ services:
     command: granian api.app:app --interface asgi --host 0.0.0.0 --port 8000 --reload --loop uvloop
     environment:
       MONGODB_HOST: mongodb
-      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-fb}
+      MONGODB_DB_NAME: ${COMPOSE_PROJECT_NAME}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       HTTP_PROXY: ${HTTP_PROXY:-}
@@ -37,8 +39,6 @@ services:
       ENABLE_SCHEDULER: "true"   # 启用调度器（Leader Election）
       ENABLE_WORKER: "true"      # 启用 worker 消费任务
       WORKER_CONCURRENCY: "5"    # 开发环境降低并发数
-    env_file:
-      - .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -79,11 +79,5 @@ services:
       gateway:
         aliases:
           - ${COMPOSE_PROJECT_NAME}-frontend-dev  # 外部网络使用唯一别名
-    labels:
-      - traefik.enable=true
-      # 开发路由：支持两个域名，绕过身份认证
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.rule=Host(`${COMPOSE_PROJECT_NAME}-dev.${DOMAIN}`) || Host(`${COMPOSE_PROJECT_NAME}-dev.${DOMAIN2}`)
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.entrypoints=web
-      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.middlewares=strip-user-headers@file
-      - traefik.http.services.${COMPOSE_PROJECT_NAME}-dev.loadbalancer.server.port=80
     restart: unless-stopped
+    # Traefik labels 通过 compose.dev-single.yml 或 compose.dev-dual.yml 添加

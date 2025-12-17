@@ -1,0 +1,11 @@
+# 开发模式单域名 Traefik 路由配置（绕过认证）
+# 使用方法: docker compose -f docker-compose.yml -f compose.dev.yml -f compose.dev-single.yml up
+
+services:
+  frontend-dev:
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.rule=Host(`${COMPOSE_PROJECT_NAME}-dev.${DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.entrypoints=web
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-dev.middlewares=strip-user-headers@file
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}-dev.loadbalancer.server.port=80

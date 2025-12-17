@@ -1,0 +1,23 @@
+# 双域名 Traefik 路由配置
+# 使用方法: docker compose -f docker-compose.yml -f compose.dual-domain.yml up
+
+services:
+  frontend:
+    labels:
+      - traefik.enable=true
+
+      # 域名1 路由
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain1.rule=Host(`${COMPOSE_PROJECT_NAME}.${DOMAIN}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain1.entrypoints=web
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain1.middlewares=strip-user-headers@file,oidc-auth@file
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain1.service=${COMPOSE_PROJECT_NAME}
+
+      # 域名2 路由
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain2.rule=Host(`${COMPOSE_PROJECT_NAME}.${DOMAIN2}`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain2.entrypoints=web
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain2.middlewares=strip-user-headers@file,oidc-auth2@file
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}-domain2.service=${COMPOSE_PROJECT_NAME}
+
+      # 服务定义（两个路由共享）
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=80
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.serverstransport=http1-pool@file

@@ -38,22 +38,41 @@ mongodb
 
 ### 生产模式
 
+**单域名部署**（默认）:
 ```bash
 ./start.sh
 ```
 
-访问地址: `https://fb.${DOMAIN}` (通过 Tunnel 暴露)
+**双域名部署**:
+```bash
+./start.sh --dual-domain
+# 或简写
+./start.sh -d
+```
+
+访问地址:
+- 单域名: `https://${COMPOSE_PROJECT_NAME}.${DOMAIN}` (通过 Tunnel 暴露)
+- 双域名: `https://${COMPOSE_PROJECT_NAME}.${DOMAIN}` 和 `https://${COMPOSE_PROJECT_NAME}.${DOMAIN2}` (通过 Tunnel 暴露)
 
 ### 开发模式
 
+**单域名开发**（默认）:
 ```bash
 ./dev.sh
 ```
 
+**双域名开发**:
+```bash
+./dev.sh --dual-domain
+# 或简写
+./dev.sh -d
+```
+
 访问地址:
-- 生产环境（带认证）: `https://fb.${DOMAIN}` (通过 Tunnel 暴露)
-- 开发环境（无认证）: `https://fb-dev.${DOMAIN}` (通过 Tunnel 暴露)
-- 本地测试（绕过 Tunnel）: `curl --resolve fb-dev.${DOMAIN}:8080:127.0.0.1 http://fb-dev.${DOMAIN}:8080`
+- 生产环境（带认证）: `https://${COMPOSE_PROJECT_NAME}.${DOMAIN}` (通过 Tunnel 暴露)
+- 开发环境（无认证）: `https://${COMPOSE_PROJECT_NAME}-dev.${DOMAIN}` (通过 Tunnel 暴露)
+- 双域名模式: 每个域名都支持对应的 `-dev` 子域名
+- 本地测试（绕过 Tunnel）: `curl --resolve ${COMPOSE_PROJECT_NAME}-dev.${DOMAIN}:8080:127.0.0.1 http://${COMPOSE_PROJECT_NAME}-dev.${DOMAIN}:8080`
 
 ### 停止服务
 
@@ -71,10 +90,48 @@ mongodb
 
 ```env
 COMPOSE_PROJECT_NAME=ad-regulation-http  # 项目名称
-DOMAIN=moondeity.dpdns.org               # 域名
+DOMAIN=moondeity.dpdns.org               # 主域名
+DOMAIN2=example.com                      # 第二域名（仅双域名部署使用）
 MONGO_INITDB_ROOT_USERNAME=admin         # MongoDB 用户名
 MONGO_INITDB_ROOT_PASSWORD=admin123      # MongoDB 密码
 ```
+
+### Compose 文件组织
+
+项目采用模块化 compose 文件设计，通过组合不同文件实现灵活部署：
+
+**基础文件**:
+- `docker-compose.yml` - 基础配置（mongodb, redis, backend, frontend 基础配置，不含 Traefik labels）
+
+**生产环境域名配置**:
+- `compose.single-domain.yml` - 单域名 Traefik 路由（带 OIDC 认证）
+- `compose.dual-domain.yml` - 双域名 Traefik 路由（带 OIDC 认证）
+
+**开发环境配置**:
+- `compose.dev.yml` - 开发容器定义（backend-dev, frontend-dev，不含路由）
+- `compose.dev-single.yml` - 开发单域名路由（绕过认证）
+- `compose.dev-dual.yml` - 开发双域名路由（绕过认证）
+
+**组合方式**:
+```bash
+# 单域名生产
+docker compose -f docker-compose.yml -f compose.single-domain.yml up -d
+
+# 双域名生产
+docker compose -f docker-compose.yml -f compose.dual-domain.yml up -d
+
+# 单域名开发
+docker compose -f docker-compose.yml -f compose.single-domain.yml -f compose.dev.yml -f compose.dev-single.yml up -d
+
+# 双域名开发
+docker compose -f docker-compose.yml -f compose.dual-domain.yml -f compose.dev.yml -f compose.dev-dual.yml up -d
+```
+
+**优势**:
+- ✅ 消除重复代码，基础配置统一管理
+- ✅ 灵活切换单/双域名，无需修改文件
+- ✅ 清晰的配置分层，易于理解和维护
+- ✅ 脚本封装细节，用户只需关注 `--dual-domain` 参数
 
 ### 服务端口
 
