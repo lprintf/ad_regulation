@@ -49,7 +49,7 @@ PYTHONPATH=. uv run --env-file=../.env python scripts/db_migration/mongo_import_
 2. **复制数据和脚本到容器**：
 ```bash
 # 进入 docker-compose.yml 所在目录
-cd /path/to/ad_regulation/http  # 或 https 目录
+cd /path/to/ad_regulation/tunnel  # 或 https 目录
 
 # 复制数据文件到容器
 docker cp ../backend/output/mongo_dump/. <backend-container-name>:/app/output/mongo_dump/

@@ -343,5 +343,5 @@ docker compose -f docker-compose.yml -f compose.dev.yml restart backend
 ## 相关文档
 
 - 生产部署: [README.md](README.md)
-- HTTP 部署: [../http/README.md](../http/README.md)
-- HTTP 开发模式: [../http/dev.md](../http/dev.md)
+- 推荐部署: [../tunnel/README.md](../tunnel/README.md)
+- HTTP 开发模式: [../tunnel/dev.md](../tunnel/dev.md)

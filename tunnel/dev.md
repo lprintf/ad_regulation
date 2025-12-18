@@ -16,7 +16,7 @@ HTTP 模式使用**独立容器策略**，开发容器与生产容器完全隔�
 ## 启动开发环境
 
 ```bash
-cd /home/lprintf/workspace/ad_regulation/http
+cd /home/lprintf/workspace/ad_regulation/tunnel
 ./dev.sh
 ```
 

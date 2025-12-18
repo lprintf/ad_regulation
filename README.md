@@ -15,23 +15,20 @@
 ```
 ad_regulation/
 ├── backend/              # 后端代码（FastAPI + MongoDB）
-│   ├── api/             # FastAPI 应用
-│   ├── baseline/        # ML 数据管道
-│   ├── utils/           # 核心工具
-│   └── config.py        # 配置文件
-├── frontend/             # 前端代码（Vue.js）
-├── http/                 # HTTP 部署配置
-│   ├── docker-compose.yml
-│   ├── compose.dev.yml
+│   ├── api/              # FastAPI 应用
+│   ├── baseline/         # ML 数据管道
+│   ├── utils/            # 核心工具
+│   └── config.py         # 配置文件
+├── frontend/             # 前端代码（React + TypeScript）
+├── tunnel/               # 部署配置（Cloudflare Tunnel + Traefik）
+│   ├── docker-compose.yml            # 基础配置
+│   ├── compose.single-domain.yml     # 单域名路由
+│   ├── compose.dual-domain.yml       # 双域名路由
+│   ├── compose.dev.yml               # 开发容器
+│   ├── compose.dev-single.yml        # 开发单域名路由
+│   ├── compose.dev-dual.yml          # 开发双域名路由
 │   ├── .env
-│   ├── start.sh, stop.sh, dev.sh, dev-stop.sh
-│   ├── README.md
-│   └── dev.md
-├── https/                # HTTPS 部署配置
-│   ├── docker-compose.yml
-│   ├── compose.dev.yml
-│   ├── .env
-│   ├── start.sh, stop.sh, dev.sh, dev-stop.sh
+│   ├── start.sh, dev.sh, stop.sh, dev-stop.sh
 │   ├── README.md
 │   └── dev.md
 └── README.md             # 本文件
@@ -41,31 +38,26 @@ ad_regulation/
 
 ### Docker 部署（推荐）
 
-#### HTTP 模式（本地开发）
-
 ```bash
-cd http/
-./start.sh              # 生产模式
-# 或
-./dev.sh                # 开发模式（无需认证）
+cd tunnel/
+
+# 单域名生产模式
+./start.sh
+
+# 双域名生产模式
+./start.sh --dual-domain
+
+# 开发模式（支持热重载）
+./dev.sh                # 单域名
+./dev.sh --dual-domain  # 双域名
 ```
 
-访问地址:
-- 生产: `http://fb.${DOMAIN}` (需要 OIDC 认证)
-- 开发: `http://fb-dev.${DOMAIN}` (无需认证)
+**访问地址**（通过 Cloudflare Tunnel 暴露 HTTPS）:
+- 生产: `https://${COMPOSE_PROJECT_NAME}.${DOMAIN}` (OIDC 认证)
+- 开发: `https://${COMPOSE_PROJECT_NAME}-dev.${DOMAIN}` (无认证)
+- 本地测试: `curl --resolve ${COMPOSE_PROJECT_NAME}-dev.${DOMAIN}:8080:127.0.0.1 http://...`
 
-#### HTTPS 模式（生产环境）
-
-```bash
-cd https/
-./start.sh              # 生产模式
-# 或
-./dev.sh                # 开发模式
-```
-
-访问地址:
-- 生产: `https://fb.${DOMAIN}` (需要 OIDC 认证)
-- 开发: `https://fb-dev.${DOMAIN}` (直连后端，无需认证)
+详见 [tunnel/README.md](tunnel/README.md)
 
 ### 本地开发（不使用 Docker）
 
@@ -109,30 +101,6 @@ API 访问地址:
 - **API**: http://localhost:8000
 - **文档**: http://localhost:8000/docs
 - **健康检查**: http://localhost:8000/health
-
-## 部署模式对比
-
-| 特性 | HTTP 模式 | HTTPS 模式 |
-|------|-----------|------------|
-| TLS 加密 | ❌ | ✅ |
-| OIDC 认证 | ✅ | ✅ |
-| 开发策略 | 独立容器 | 覆盖模式 |
-| 资源占用 | 较高 | 较低 |
-| 适用场景 | 本地开发 | 生产环境 |
-
-### HTTP 模式特点
-
-- **独立容器策略**: 开发容器与生产容器完全隔离
-- **灵活性高**: 可同时运行生产和开发环境
-- **快速迭代**: 停止开发容器不影响基础设施
-- **适合场景**: 本地开发、频繁测试
-
-### HTTPS 模式特点
-
-- **覆盖策略**: 使用 compose.dev.yml 覆盖生产配置
-- **资源节约**: 同一组容器，不同配置
-- **快速切换**: 生产/开发模式一键切换
-- **适合场景**: 生产部署、临时调试
 
 ## 架构说明
 
@@ -198,26 +166,26 @@ GET /health
 ### 后端开发
 
 ```bash
-cd http/    # 或 cd https/
+cd tunnel/
 ./dev.sh
 
-# 修改代码（自动重载）
+# 修改代码（自动热重载）
 vim ../backend/api/routers/ad_accounts.py
 
 # 查看日志
-docker compose -f docker-compose.yml -f compose.dev.yml logs -f backend
+docker compose logs -f backend-dev
 ```
 
 ### 前端开发
 
 ```bash
 # 启动开发环境
-cd http/
+cd tunnel/
 ./dev.sh
 
 # 修改前端代码
 cd ../frontend
-vim src/App.vue
+vim src/App.tsx
 
 # 重新构建
 npm run build
@@ -238,57 +206,42 @@ python backend/baseline/train_tools.py
 
 ## 环境配置
 
-### HTTP 模式
-
-编辑 `http/.env`:
+编辑 `tunnel/.env`:
 
 ```env
-COMPOSE_PROJECT_NAME=ad-regulation-http
+COMPOSE_PROJECT_NAME=fb
 DOMAIN=moondeity.dpdns.org
-MONGO_INITDB_ROOT_USERNAME=admin
-MONGO_INITDB_ROOT_PASSWORD=admin123
-```
-
-### HTTPS 模式
-
-编辑 `https/.env`:
-
-```env
-COMPOSE_PROJECT_NAME=ad-regulation-https
-DOMAIN=moondeity.dpdns.org
+DOMAIN2=example.com  # 双域名部署时使用
 MONGO_INITDB_ROOT_USERNAME=admin
 MONGO_INITDB_ROOT_PASSWORD=admin123
 ```
 
 ## 从旧版本迁移
 
-如果你之前使用根目录的 `compose.yml`:
+如果你之前使用旧的部署方式:
 
-1. **停止旧版本**
+1. **停止旧容器**
    ```bash
    docker compose down
    ```
 
-2. **备份数据**（可选）
+2. **启动新版本**
    ```bash
-   # 数据卷会保留，可以手动备份
-   docker volume ls | grep mongo
+   cd tunnel/
+   ./start.sh  # 或 ./start.sh --dual-domain
    ```
 
-3. **启动新版本**
-   ```bash
-   # 选择 HTTP 或 HTTPS 模式
-   cd http/    # 或 cd https/
-   ./start.sh
-   ```
+数据卷会自动保留（根据 `COMPOSE_PROJECT_NAME` 识别）。
 
 ## 详细文档
 
-- [HTTP 部署文档](http/README.md)
-- [HTTP 开发指南](http/dev.md)
-- [HTTPS 部署文档](https/README.md)
-- [HTTPS 开发指南](https/dev.md)
+- [部署文档](tunnel/README.md)
+- [开发指南](tunnel/dev.md)
 - [架构文档](CLAUDE.md)
+
+**历史文档** (不推荐使用):
+- [HTTPS 部署](https/README.md) - 旧版 HTTPS 配置（已被 tunnel/ 替代）
+
 
 ## 技术栈
 

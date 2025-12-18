@@ -218,5 +218,5 @@ docker compose logs mongodb
 ## 更多信息
 
 - 开发模式详细说明: [dev.md](dev.md)
-- HTTP 部署方式: [../http/README.md](../http/README.md)
+- 推荐部署方式: [../tunnel/README.md](../tunnel/README.md)
 - 项目根目录: `/home/lprintf/workspace/ad_regulation/`
