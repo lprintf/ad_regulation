@@ -18,13 +18,13 @@ mongodb
 
 ## 网络架构
 
-- **内部网络**: `ad-regulation-https_internal`
+- **内部网络**: `${COMPOSE_PROJECT_NAME}_internal`
   - mongodb: 仅内部网络
   - backend: 仅内部网络
   - frontend: 桥接内外网络
 
 - **外部网络**: `gateway`
-  - frontend: 使用别名 `ad-regulation-https-frontend`
+  - frontend: 使用别名 `${COMPOSE_PROJECT_NAME}-frontend`
 
 ## 快速开始
 
@@ -61,7 +61,7 @@ mongodb
 ### 环境变量 (.env)
 
 ```env
-COMPOSE_PROJECT_NAME=ad-regulation-https  # 项目名称
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}  # 项目名称
 DOMAIN=moondeity.dpdns.org                # 域名
 MONGO_INITDB_ROOT_USERNAME=admin          # MongoDB 用户名
 MONGO_INITDB_ROOT_PASSWORD=admin123       # MongoDB 密码
@@ -140,7 +140,7 @@ docker compose down -v
 
 项目采用双网络架构，确保安全性和服务隔离:
 
-1. **内部网络** (`ad-regulation-https_internal`)
+1. **内部网络** (`${COMPOSE_PROJECT_NAME}_internal`)
    - 项目专属网络
    - 所有服务间通信使用简单服务名（mongodb, backend, frontend）
    - 不与其他项目冲突
@@ -156,10 +156,10 @@ docker compose down -v
 
 ```bash
 # 实例 1（默认）
-COMPOSE_PROJECT_NAME=ad-regulation-https docker compose up -d
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME} docker compose up -d
 
 # 实例 2（测试环境）
-COMPOSE_PROJECT_NAME=ad-regulation-https-test docker compose up -d
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}-test docker compose up -d
 ```
 
 每个实例拥有:

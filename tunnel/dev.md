@@ -186,7 +186,7 @@ docker compose -f docker-compose.yml -f compose.dev.yml up -d --build
 
 ```env
 # .env
-COMPOSE_PROJECT_NAME=ad-regulation-http
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}
 DOMAIN=moondeity.dpdns.org
 MONGO_INITDB_ROOT_USERNAME=admin
 MONGO_INITDB_ROOT_PASSWORD=admin123
@@ -197,7 +197,7 @@ MONGO_INITDB_ROOT_PASSWORD=admin123
 开发容器使用相同的网络架构:
 
 - `backend-dev`, `frontend-dev` 在内部网络通信
-- `frontend-dev` 使用别名 `ad-regulation-http-frontend-dev` 暴露到 gateway
+- `frontend-dev` 使用别名 `${COMPOSE_PROJECT_NAME}-frontend-dev` 暴露到 gateway
 - 不与其他项目的开发环境冲突
 
 ## 性能优化

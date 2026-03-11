@@ -26,13 +26,13 @@ mongodb
 
 ## 网络架构
 
-- **内部网络**: `ad-regulation-http_internal`
+- **内部网络**: `${COMPOSE_PROJECT_NAME}_internal`
   - mongodb: 仅内部网络
   - backend: 仅内部网络
   - frontend: 桥接内外网络
 
 - **外部网络**: `gateway`
-  - frontend: 使用别名 `ad-regulation-http-frontend`
+  - frontend: 使用别名 `${COMPOSE_PROJECT_NAME}-frontend`
 
 ## 快速开始
 
@@ -89,7 +89,7 @@ mongodb
 ### 环境变量 (.env)
 
 ```env
-COMPOSE_PROJECT_NAME=ad-regulation-http  # 项目名称
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}  # 项目名称
 DOMAIN=moondeity.dpdns.org               # 主域名
 DOMAIN2=example.com                      # 第二域名（仅双域名部署使用）
 MONGO_INITDB_ROOT_USERNAME=admin         # MongoDB 用户名
@@ -142,23 +142,21 @@ docker compose -f docker-compose.yml -f compose.dual-domain.yml -f compose.dev.y
 - mongodb: 27017 (内部)
 
 开发模式（额外）:
-- mongodb: 27017 (暴露到宿主机)
+- mongodb: 27017 (暴露到宿主机，默认注释)
 
 ### Tunnel 配置
 
-本项目使用 Cloudflare Tunnel 或自建 Tunnel 将内部 HTTP 服务暴露为公网 HTTPS:
+项目同时支持 Cloudflare Tunnel 和自建 Tunnel（如 frp），两者并存且用法一致：
 
-1. **Cloudflare Tunnel** (推荐)
-   - 自动处理 TLS 证书
-   - 配置文件: `tunnel/cloudflared/config.yml`
-   - 指向: `http://localhost:8080`
+- **监听端口**: 同时监听 8080 端口
+- **转发目标**: `http://localhost:8080` (Traefik)
+- **TLS 终止**: 由 Tunnel 层处理，内部服务使用 HTTP
 
-2. **自建 Tunnel**
-   - 使用 frp/ngrok 等工具
-   - 需要自行配置 TLS 终止
-   - 转发到: `http://localhost:8080`
+部署方式:
+- **Cloudflare Tunnel**: 使用 Tunnel Token 部署（推荐方式）
+- **自建 Tunnel**: 根据使用的工具配置
 
-**重要**: 内部服务无需配置 HTTPS，所有 TLS 加密由 Tunnel 层处理。
+**重要**: 无论使用哪种 Tunnel，内部服务配置完全相同，无需额外区别。
 
 ## 开发模式特性
 
@@ -181,39 +179,18 @@ HTTP 模式使用独立容器策略:
    - `dev-stop.sh` 仅停止 backend-dev 和 frontend-dev
    - mongodb 保持运行，加快下次启动
 
-## 常用命令
-
-```bash
-# 查看容器状态
-docker compose ps
-
-# 查看日志
-docker compose logs -f
-docker compose logs -f backend
-
-# 重启服务
-docker compose restart backend
-
-# 进入容器
-docker compose exec backend bash
-docker compose exec mongodb mongosh
-
-# 清理所有数据（危险操作）
-docker compose down -v
-```
-
 ## 网络隔离说明
 
 项目采用双网络架构，确保安全性和服务隔离:
 
-1. **内部网络** (`ad-regulation-http_internal`)
+1. **内部网络** (`${COMPOSE_PROJECT_NAME}_internal`)
    - 项目专属网络
    - 所有服务间通信使用简单服务名（mongodb, backend, frontend）
    - 不与其他项目冲突
 
 2. **外部网络** (`gateway`)
    - 仅 frontend 连接
-   - 使用网络别名 `ad-regulation-http-frontend` 确保唯一性
+   - 使用网络别名 `${COMPOSE_PROJECT_NAME}-frontend` 确保唯一性
    - 通过 Traefik 提供外部访问
 
 ## 多实例支持
@@ -222,10 +199,10 @@ docker compose down -v
 
 ```bash
 # 实例 1（默认）
-COMPOSE_PROJECT_NAME=ad-regulation-http docker compose up -d
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME} docker compose up -d
 
 # 实例 2（测试环境）
-COMPOSE_PROJECT_NAME=ad-regulation-http-test docker compose up -d
+COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}-test docker compose up -d
 ```
 
 每个实例拥有:
@@ -233,32 +210,6 @@ COMPOSE_PROJECT_NAME=ad-regulation-http-test docker compose up -d
 - 独立的内部网络
 - 独立的数据卷
 - 独立的网络别名
-
-## 故障排除
-
-### 404 错误
-
-检查 backend 容器是否正常运行:
-```bash
-docker compose ps backend
-docker compose logs backend
-```
-
-### 连接数据库失败
-
-检查 mongodb 容器状态:
-```bash
-docker compose ps mongodb
-docker compose logs mongodb
-```
-
-### 端口冲突
-
-检查是否有其他服务占用端口:
-```bash
-docker compose ps
-lsof -i :27017
-```
 
 ## 更多信息
 
